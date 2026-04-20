@@ -1,0 +1,39 @@
+---
+description: Frontend TypeScript/React conventions for Sentinel-Next
+globs: frontend/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Frontend Conventions
+
+## Imports
+
+- ES imports only — NEVER `require()`
+- Use `@/lib/store` for Zustand state
+- Use `@/lib/api` for REST calls — never raw `fetch()` with relative URLs
+- Use `@/lib/ws` for WebSocket connection
+
+## State management
+
+- Zustand store in `lib/store.ts` — single source of truth
+- WebSocket events update store; components subscribe reactively
+- Demo mode in `lib/demo.ts` — generates synthetic events when backend is offline
+
+## Styling
+
+- CSS variables defined in `globals.css` (--bg, --surface, --accent, --text, etc.)
+- Inline `style={{}}` for dynamic theming — not Tailwind classes for colors
+- Tailwind for layout, spacing, typography
+- Badge classes: `.badge-vip`, `.badge-staff`, `.badge-regular`, `.badge-new`
+
+## Components
+
+- All dashboard components in `components/dashboard/`
+- ErrorBoundary wraps main content area
+- HealthPanel polls `/health/detail` every 10 seconds
+- ChatDrawer uses both WebSocket and REST API fallback
+
+## API URLs
+
+- Always use env vars: `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL`
+- Localhost fallbacks only for local dev

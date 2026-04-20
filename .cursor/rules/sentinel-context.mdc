@@ -1,0 +1,80 @@
+---
+description: Sentinel-Next project context — multi-tenant SaaS architecture
+alwaysApply: true
+---
+
+# Sentinel-Next — Project Context
+
+## What is this
+
+Multi-tenant AI surveillance SaaS. Central server + edge agents in salons. 120+ salons (Май Тай), each with own cameras, users, analytics. Cameras → YOLOv11 → ByteTrack → InsightFace → Qdrant → Zone Intelligence → LLM summarization → PWA dashboard + Telegram alerts.
+
+## Tech Stack
+
+- **Backend**: Python 3.11, FastAPI, Uvicorn, asyncio
+- **AI**: YOLOv11 (Ultralytics), InsightFace (ArcFace), supervision (ByteTrack)
+- **LLM**: Anthropic Claude 3.5 Sonnet (primary), OpenAI GPT-4o-mini (fallback)
+- **DBs**: PostgreSQL 16 (asyncpg + SQLAlchemy), Redis 7 (event bus), Qdrant (face vectors)
+- **Frontend**: Next.js 15 (App Router), TypeScript, Tailwind v4, Zustand, Recharts, Framer Motion, PWA
+- **Logging**: loguru
+- **Infra**: Docker Compose, Nginx, Alembic, Railway
+
+## Multi-Tenant Architecture
+
+- **superadmin**: `tenant_id="__all__"`. Sees all. CANNOT enroll persons or add cameras.
+- **admin**: Salon owner. Sees only own tenant data.
+- **viewer**: Read-only. **edge agent**: Authenticates via tenant API key.
+- Auth: JWT (HS256) + API Keys. `SECRET_KEY` = superadmin API key.
+- All data queries filtered by `tenant_id`. WebSocket events filtered by tenant.
+
+## DB Schema (migration 005)
+
+- `tenants` — id, name, slug, api_key, plan, max_cameras, is_active, telegram_chat_id
+- `users` — id, tenant_id, email, password_hash, role, is_active
+- `cameras` — id, tenant_id, url, name, location_id, fps_inference, enabled, ezviz_serial, ezviz_channel (DB-persisted, auto-loaded on startup)
+- `persons` — id, tenant_id, name, category
+- `visits` — id, tenant_id, person_id, entered_at
+- `alerts` — id, tenant_id, type, severity
+- `narrative_summaries` — id, tenant_id, narrative
+- `zones` — id, camera_id, tenant_id, name, zone_type, polygon (JSON), staff_required, max_absence/wait
+
+## Zone Intelligence
+
+- **ZoneTracker** (`services/ai/zone_tracker.py`): Point-in-polygon, staff absence, client unattended.
+- **Events**: `zone.entered`, `zone.exited`, `staff.absent`, `client.unattended`
+- **TelegramNotifier**: Alerts via Bot API. `/start <api_key>` auto-links chat_id.
+
+## Key Conventions
+
+1. `from loguru import logger`. NEVER structlog.
+2. Heavy imports: always lazy.
+3. Tenant isolation: every DB query MUST filter by `tenant_id`.
+4. Events flow through EventBus as SentinelEvent with `tenant_id`.
+5. Demo mode: `DEMO_MODE=true`.
+6. Default superadmin: admin@sentinel.ai / admin.
+7. Camera persistence: cameras saved to `cameras` table, auto-loaded on startup.
+8. Railway: Postgres via Railway plugin. `DATABASE_URL` auto-set. Redis/Qdrant as plugins or external.
+
+## Hik-Connect Cloud Integration (WORKING)
+
+- Based on reverse-engineered API from `github.com/tomasbedrich/hikconnect`
+- `services/hikconnect/client.py` — async httpx client, login with email + MD5(password)
+- Russian accounts use `api.hik-connectru.com` (region redirect via code 1100 → `apiirus.hik-connectru.com`)
+- Login endpoint: `POST /v3/users/login/v2` with headers `clientType: 55`, `featureCode: deadbeef`
+- Device listing: `GET /v3/userdevices/v1/devices/pagelist`
+- Camera listing per device: `GET /v3/userdevices/v1/cameras/info?deviceSerial=...`
+- Stream URL: `POST /v3/streaming/previewParam` (HLS, requires cloud subscription on device)
+- Session refresh: `PUT /v3/apigateway/login` with `refreshSessionId`
+- JWT session valid ~24h, auto-refreshable
+- `api/routes/hikconnect.py` — `/hikconnect/connect`, `/hikconnect/cameras`, `/hikconnect/import`, `/hikconnect/refresh/{id}`
+- Frontend: Камеры → Добавить → Hik-Connect Cloud → login or auto-discover from account
+- Verified: 3 devices (Ленинградка, Бабушкинская, Мытищи), 10 cameras total
+
+## Config (env vars)
+
+- `DATABASE_URL`, `REDIS_URL`, `QDRANT_URL` — infrastructure
+- `ANTHROPIC_API_KEY` — LLM
+- `SECRET_KEY` — JWT signing + superadmin API key
+- `TELEGRAM_BOT_TOKEN` — Telegram alerts (empty = disabled)
+- `HIKCONNECT_EMAIL`, `HIKCONNECT_PASSWORD`, `HIKCONNECT_REGION` — Hik-Connect login (default region: ru)
+- `DEMO_MODE` — synthetic camera

@@ -1,0 +1,23 @@
+[project]
+name = "sentinel-edge"
+version = "0.1.0"
+description = "Sentinel-Next Edge Agent — local video processing + API sync"
+requires-python = ">=3.10"
+dependencies = [
+    "opencv-python-headless>=4.9",
+    "ultralytics>=8.3",
+    "supervision>=0.25",
+    "numpy>=1.26",
+    "httpx>=0.28",
+    "python-dotenv>=1.0",
+    "loguru>=0.7",
+    "typer>=0.14",
+    "psutil>=6.0",
+]
+
+[project.scripts]
+sentinel-edge = "sentinel_edge.cli:app"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,2 @@
+# Sentinel-Next Backend
+__version__ = "2026.1.0"

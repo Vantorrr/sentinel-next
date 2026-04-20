@@ -1,0 +1,37 @@
+---
+description: Backend Python conventions for Sentinel-Next
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+# Backend Conventions
+
+## Imports
+
+- Logging: `from loguru import logger` — NEVER structlog
+- Heavy AI/DB libs (`ultralytics`, `insightface`, `supervision`, `anthropic`, `qdrant_client`): lazy import inside methods
+- Use `from __future__ import annotations` in every file
+
+## Async patterns
+
+- All DB operations use `AsyncSessionLocal` from `sentinel.db.base`
+- CPU-bound work (YOLO, InsightFace) runs in `ThreadPoolExecutor` via `loop.run_in_executor`
+- Event publishing: `await bus.publish(SentinelEvent(...))`
+- Never block the event loop with synchronous I/O
+
+## Type annotations
+
+- All public methods must have return type annotations
+- Use `AsyncSession` for DB session parameters
+- Use `TYPE_CHECKING` guard for imports only needed by type checkers
+
+## Error handling
+
+- Camera readers: infinite loop with exponential backoff, never raise
+- Pipeline processors: catch per-frame, log error, continue
+- DB Writer: catch per-event, log error, never crash
+
+## Config
+
+- ALL settings via `sentinel.core.config.get_settings()` — never hardcode
+- Device detection is automatic — don't assume mps/cuda
