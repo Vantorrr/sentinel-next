@@ -1,0 +1,234 @@
+@import "tailwindcss";
+
+:root {
+  /* ── Core palette ──────────────────────────────────────────── */
+  --bg: #06080f;
+  --bg-primary: #06080f;
+  --bg-secondary: #0d1117;
+  --surface: #0d1117;
+  --surface-2: #161b27;
+  --border: #1e2738;
+
+  /* ── Glass ─────────────────────────────────────────────────── */
+  --glass-bg: rgba(13, 17, 23, 0.65);
+  --glass-border: rgba(30, 39, 56, 0.55);
+  --glass-blur: 16px;
+
+  /* ── Accents ───────────────────────────────────────────────── */
+  --accent: #00e5ff;
+  --accent-dim: rgba(0, 229, 255, 0.08);
+  --accent-glow: rgba(0, 229, 255, 0.25);
+  --accent-2: #7c3aed;
+  --green: #00ff87;
+  --red: #ff3b5c;
+  --yellow: #ffd600;
+  --alert: #ff3b5c;
+
+  /* ── Text ──────────────────────────────────────────────────── */
+  --text: #e2e8f0;
+  --text-primary: #e2e8f0;
+  --text-dim: #64748b;
+  --text-muted: #64748b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-inter, "Inter"), system-ui, -apple-system, sans-serif;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* ── Glass utilities ─────────────────────────────────────────── */
+.glass-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-radius: 16px;
+}
+
+.glass-card-sm {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 12px;
+}
+
+.glass-input {
+  background: rgba(13, 17, 23, 0.5);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 12px;
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.glass-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim), 0 0 16px var(--accent-glow);
+}
+.glass-input::placeholder {
+  color: var(--text-muted);
+}
+
+.glass-surface {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+/* ── Glow effects ────────────────────────────────────────────── */
+.glow-cyan {
+  box-shadow: 0 0 20px rgba(0, 229, 255, 0.15), 0 0 40px rgba(0, 229, 255, 0.05);
+}
+.glow-red {
+  box-shadow: 0 0 20px rgba(255, 59, 92, 0.25);
+}
+.glow-green {
+  box-shadow: 0 0 20px rgba(0, 255, 135, 0.15);
+}
+.glow-purple {
+  box-shadow: 0 0 20px rgba(124, 58, 237, 0.2);
+}
+
+/* ── Animated gradient border ────────────────────────────────── */
+.border-gradient {
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  position: relative;
+}
+.border-gradient::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  z-index: -1;
+  opacity: 0.4;
+}
+
+.border-glow {
+  position: relative;
+}
+.border-glow::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2), var(--accent));
+  background-size: 300% 300%;
+  z-index: -1;
+  opacity: 0.5;
+  animation: glow-shift 4s ease-in-out infinite;
+}
+
+/* ── Keyframes ───────────────────────────────────────────────── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.8; }
+}
+
+@keyframes glow-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+@keyframes data-flicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* ── Skeleton loader ─────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    rgba(30, 39, 56, 0.6) 50%,
+    var(--surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+/* ── Pulse dot ───────────────────────────────────────────────── */
+.pulse-dot::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  animation: pulse-ring 1.5s ease-out infinite;
+}
+
+/* ── Data stream animation ───────────────────────────────────── */
+.data-stream {
+  animation: data-flicker 2s ease-in-out infinite;
+}
+
+/* ── Category badges ─────────────────────────────────────────── */
+.badge-vip { background: rgba(124, 58, 237, 0.2); color: #a78bfa; border: 1px solid #7c3aed44; }
+.badge-staff { background: rgba(0, 229, 255, 0.1); color: #00e5ff; border: 1px solid #00e5ff44; }
+.badge-regular { background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid #33415544; }
+.badge-new { background: rgba(0, 255, 135, 0.1); color: #00ff87; border: 1px solid #00ff8744; }
+.badge-alert { background: rgba(255, 59, 92, 0.15); color: #ff3b5c; border: 1px solid #ff3b5c44; }
+
+/* ── Focus ring ──────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Backdrop for modals ─────────────────────────────────────── */
+.modal-backdrop {
+  background: rgba(6, 8, 15, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}

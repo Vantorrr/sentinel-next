@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+frontend/.env.local
 
 .DS_Store
 __pycache__/
@@ -8,6 +9,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.tsbuildinfo
 
 node_modules/
 .next/
@@ -19,5 +21,7 @@ venv/
 dist/
 build/
 coverage/
+backend/logs/
+backend/data/models/
 
 *.log
