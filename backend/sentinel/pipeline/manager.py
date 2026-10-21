@@ -37,12 +37,31 @@ class PipelineManager:
         self._heatmap = HeatmapService()
 
     async def startup(self) -> None:
-        logger.info("🚀 PipelineManager startup — loading AI models")
-        self._detection = DetectionService()
-        await self._detection.load()
-        self._reid = FaceReIDService()
-        await self._reid.load()
-        logger.success("✅ PipelineManager ready")
+        # Lazy AI load: Railway/small VMs OOM if YOLO+InsightFace warm at boot.
+        # Models load on first camera add (or explicit warm).
+        skip = str(__import__("os").environ.get("SKIP_AI_WARMUP", "true")).lower() in (
+            "1", "true", "yes",
+        )
+        if skip:
+            logger.info("🚀 PipelineManager ready — AI models deferred until first camera")
+            return
+        await self._ensure_models()
+
+    async def _ensure_models(self) -> None:
+        if self._detection is not None and self._reid is not None:
+            return
+        logger.info("🚀 Loading AI models (YOLO + InsightFace)…")
+        try:
+            if self._detection is None:
+                self._detection = DetectionService()
+                await self._detection.load()
+            if self._reid is None:
+                self._reid = FaceReIDService()
+                await self._reid.load()
+            logger.success("✅ AI models ready")
+        except Exception as exc:
+            logger.error("AI model load failed: {} — cameras will not process frames", exc)
+            raise
 
     async def shutdown(self) -> None:
         logger.info("🛑 PipelineManager shutdown — cancelling {} camera tasks", len(self._tasks))
@@ -66,6 +85,12 @@ class PipelineManager:
 
     async def _start_camera(self, config: CameraConfig) -> None:
         """Load zones then start the processor task."""
+        try:
+            await self._ensure_models()
+        except Exception as exc:
+            logger.error("Cannot start camera '{}': AI unavailable — {}", config.id, exc)
+            return
+
         try:
             zone_configs = await load_zones_for_camera(config.id)
         except Exception as exc:

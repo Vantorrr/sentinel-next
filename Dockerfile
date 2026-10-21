@@ -24,8 +24,8 @@ COPY backend/sentinel ./sentinel
 RUN pip install --upgrade pip hatchling \
     && pip install .
 
-RUN mkdir -p /app/data/models /app/data/snapshots /app/logs \
-    && python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')" 2>/dev/null || true
+# Don't pre-download YOLO in image build — slows Railway and burns RAM at boot
+RUN mkdir -p /app/data/models /app/data/snapshots /app/logs
 
 COPY backend/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh

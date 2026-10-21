@@ -226,7 +226,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await bus.connect()
 
     manager = get_manager()
-    await manager.startup()
+    try:
+        await manager.startup()
+    except Exception as exc:
+        # API must stay up even if AI warmup fails (Railway RAM limits)
+        logger.error("PipelineManager startup issue: {} — API continues", exc)
 
     db_writer = DBWriter()
     db_writer_task = asyncio.create_task(db_writer.run(), name="db-writer")
