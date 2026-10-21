@@ -76,6 +76,8 @@ class EventBus:
         self._pub:  aioredis.Redis | None = None
         self._sub:  aioredis.client.PubSub | None = None
         self._local_listeners: list[asyncio.Queue[SentinelEvent]] = []
+        # Skip Redis echo of events we already delivered locally
+        self._locally_published: set[str] = set()
 
     @classmethod
     def get(cls) -> EventBus:
@@ -100,11 +102,10 @@ class EventBus:
         logger.info("📡 EventBus disconnected")
 
     async def publish(self, event: SentinelEvent) -> None:
-        if self._pub:
-            try:
-                await self._pub.publish(CHANNEL_ALL, event.to_json())
-            except Exception as exc:
-                logger.warning("EventBus.publish Redis error: {}", exc)
+        self._locally_published.add(event.id)
+        if len(self._locally_published) > 2000:
+            # Bound memory — drop oldest half
+            self._locally_published = set(list(self._locally_published)[1000:])
 
         # Local in-process broadcast (same process, zero serialisation)
         for q in list(self._local_listeners):
@@ -112,6 +113,13 @@ class EventBus:
                 q.put_nowait(event)
             except asyncio.QueueFull:
                 pass
+
+        if self._pub:
+            try:
+                await self._pub.publish(CHANNEL_ALL, event.to_json())
+            except Exception as exc:
+                logger.warning("EventBus.publish Redis error: {}", exc)
+                self._locally_published.discard(event.id)
 
     def subscribe(self) -> asyncio.Queue[SentinelEvent]:
         q: asyncio.Queue[SentinelEvent] = asyncio.Queue(maxsize=512)
@@ -133,6 +141,9 @@ class EventBus:
                     continue
                 try:
                     event = SentinelEvent.model_validate_json(message["data"])
+                    if event.id in self._locally_published:
+                        self._locally_published.discard(event.id)
+                        continue
                     for q in list(self._local_listeners):
                         try:
                             q.put_nowait(event)

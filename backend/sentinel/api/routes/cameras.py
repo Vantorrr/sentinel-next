@@ -37,6 +37,7 @@ class CameraResponse(BaseModel):
     name: str
     url: str
     location_id: str
+    tenant_id: str = ""
     enabled: bool
     running: bool
 
@@ -50,7 +51,8 @@ async def list_cameras(
         return [CameraResponse(**c) for c in all_cams]
     return [
         CameraResponse(**c) for c in all_cams
-        if c.get("location_id", "").startswith(tenant.tenant_id) or c.get("id", "").startswith("demo")
+        if c.get("location_id", "").startswith(tenant.tenant_id)
+        or c.get("tenant_id") == tenant.tenant_id
     ]
 
 
@@ -112,15 +114,26 @@ async def remove_camera(
     tenant: TenantContext = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    from sentinel.db.models.zone import Zone
+
     record = await db.get(CameraRecord, camera_id)
     if record and tenant.tenant_id != "__all__" and record.tenant_id != tenant.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    if not get_manager().remove_camera(camera_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found")
+    # Zones have no FK to cameras — delete explicitly so salon config stays clean
+    zone_q = select(Zone).where(Zone.camera_id == camera_id)
+    if tenant.tenant_id != "__all__":
+        zone_q = zone_q.where(Zone.tenant_id == tenant.tenant_id)
+    for z in (await db.execute(zone_q)).scalars().all():
+        await db.delete(z)
 
+    removed_runtime = get_manager().remove_camera(camera_id)
     if record:
         await db.delete(record)
+        await db.commit()
+    elif not removed_runtime:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found")
+    else:
         await db.commit()
 
     return {"removed": camera_id}

@@ -2,6 +2,7 @@
  * WebSocket client — connects to the Sentinel backend event stream.
  * Auto-reconnects on disconnect with exponential backoff.
  */
+import { camerasApi } from "./api";
 import { SentinelEvent, useSentinelStore } from "./store";
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000/ws/events";
@@ -32,6 +33,10 @@ export function connectEventStream() {
     console.info("[Sentinel WS] connected");
     store.setWsConnected(true);
     reconnectDelay = 1000;
+    camerasApi
+      .list()
+      .then((list) => useSentinelStore.getState().setCameras(list))
+      .catch(() => undefined);
   };
 
   ws.onmessage = (msg) => {
@@ -89,8 +94,9 @@ export function connectEventStream() {
     }
   };
 
-  ws.onerror = (err) => {
-    console.error("[Sentinel WS] error", err);
+  ws.onerror = () => {
+    // Soft log — Event objects tripped Next.js dev overlay when console.error'd
+    console.warn("[Sentinel WS] connection error (will reconnect)");
   };
 
   ws.onclose = () => {

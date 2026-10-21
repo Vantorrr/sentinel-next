@@ -20,42 +20,12 @@ from loguru import logger
 
 from sentinel.core.config import get_settings
 from sentinel.core.events import EventBus, EventType, SentinelEvent
+from sentinel.services.llm.redbook import REDBOOK_SUMMARY_PROMPT
 
 cfg = get_settings()
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Промпт — «доверенное лицо». Прямой, с характером.
-# ──────────────────────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """Ты — Sentinel, доверенный помощник владельца бизнеса.
-Ты видишь всё через камеры и докладываешь боссу кратко, по делу, без воды.
-
-Твой стиль:
-- Говоришь как опытный помощник, которому доверяют
-- Называешь людей по именам, если известны (Андрей, Маша и т.д.)
-- Указываешь конкретику: сколько новых, сколько постоянных, есть ли подозрительные
-- Если всё спокойно — так и говори. Если есть тревога — выделяй
-- Язык — живой русский, без канцелярщины и «был осуществлён вход»
-- 2–4 предложения максимум
-
-Примеры хороших нарративов:
-«Зашло 3 новых человека, Андрей на месте, работает. Спокойно.»
-«Оживлённо: 7 человек за 30 минут, среди них 2 VIP. Персонал справляется.»
-«Тревога: незнакомый тип крутится у кассы уже 10 минут, реакции персонала нет. Советую проверить.»
-«Внимание: администратор покинул ресепшн 5 минут назад. Новый клиент ждёт у входа. Срочно проверить.»
-«Персонал на местах, все зоны под контролем. 2 новых клиента обслуживаются.»
-
-Зонные события (staff.absent, client.unattended, zone.entered/exited) — важны!
-Если персонал отсутствует в ключевой зоне — выдели это как тревогу.
-Если клиент ждёт без внимания — тоже алерт.
-
-Отвечай строго JSON без markdown-обёртки:
-{
-  "narrative": "...",
-  "occupancy": <int>,
-  "mood": "позитивное|нейтральное|напряжённое",
-  "alerts": ["..."],
-  "insights": ["..."]
-}"""
+# Красная книга Вай Тай — единый стандарт доклада
+SYSTEM_PROMPT = REDBOOK_SUMMARY_PROMPT
 
 
 class SceneSummarizer:
@@ -228,21 +198,21 @@ class SceneSummarizer:
 
         parts: list[str] = []
         if staff_absent:
-            desc = staff_absent[0].get("desc", "Персонал отсутствует")
+            desc = staff_absent[0].get("desc", "Красная книга: ресепшен без Администратора")
             parts.append(f"⚠ {desc}.")
         if unattended:
-            desc = unattended[0].get("desc", "Клиент ждёт без внимания")
+            desc = unattended[0].get("desc", "Красная книга гл.3: Гость без встречи")
             parts.append(f"⚠ {desc}.")
         if names:
             parts.append(f"{', '.join(names[:3])} {'на месте' if len(names) == 1 else 'замечены'}.")
         if new_clients:
-            parts.append(f"Новых клиентов: {new_clients}.")
+            parts.append(f"Новых Гостей: {new_clients}.")
         if vips:
-            parts.append(f"VIP визит зафиксирован.")
+            parts.append("VIP-Гость зафиксирован.")
         if alerts and not staff_absent and not unattended:
-            parts.append(f"⚠ Внимание: {len(alerts)} тревожных событий.")
+            parts.append(f"⚠ Нарушения стандартов Красной книги: {len(alerts)}.")
         if not parts:
-            parts.append(f"Всё спокойно. Событий за период: {entries_count}.")
+            parts.append(f"По Красной книге спокойно. Событий: {entries_count}.")
 
         narrative = " ".join(parts)
         mood = "напряжённое" if (alerts or staff_absent or unattended) else ("позитивное" if vips else "нейтральное")

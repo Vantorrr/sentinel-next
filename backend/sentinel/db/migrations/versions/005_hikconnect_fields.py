@@ -1,14 +1,14 @@
 """Add ezviz_serial and ezviz_channel to cameras table for Hik-Connect integration.
 
 Revision ID: 005
-Revises: 004
+Revises: 004_cameras
 """
 
 from alembic import op
 import sqlalchemy as sa
 
 revision = "005"
-down_revision = "004"
+down_revision = "004_cameras"
 branch_labels = None
 depends_on = None
 

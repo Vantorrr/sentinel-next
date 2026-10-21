@@ -21,10 +21,11 @@ from typing import Any
 from loguru import logger
 
 from sentinel.core.events import EventType, SentinelEvent
+from sentinel.services.llm.redbook import remark_guest_unattended, remark_staff_absent
 
 
 PROXIMITY_THRESHOLD_PX = 150
-ALERT_COOLDOWN_SECONDS = 300  # re-alert only after 5 min
+ALERT_COOLDOWN_SECONDS = 90  # re-alert cadence (Telegram has its own rate limit too)
 
 
 @dataclass
@@ -34,8 +35,9 @@ class ZoneConfig:
     zone_type: str
     polygon: list[tuple[int, int]]
     staff_required: bool = False
-    max_absence_seconds: int = 300
-    max_wait_seconds: int = 120
+    # Красная книга Вай Тай: ресепшен не бросать; Гость не ждёт без встречи
+    max_absence_seconds: int = 180
+    max_wait_seconds: int = 60
 
 
 @dataclass
@@ -233,17 +235,19 @@ class ZoneTracker:
 
             state.last_absence_alert_ms = now_ms
             absence_min = round(absence_s / 60, 1)
+            remark = remark_staff_absent(zone_name=zone_cfg.name, absence_min=absence_min)
             events.append(SentinelEvent(
                 type=EventType.STAFF_ABSENT,
                 camera_id=self.camera_id,
                 location_id=self.location_id,
                 tenant_id=self.tenant_id,
+                confidence=1.0,  # timer rule — deterministic
                 payload={
                     "zone_id": zone_id,
                     "zone_name": zone_cfg.name,
                     "zone_type": zone_cfg.zone_type,
                     "absence_minutes": absence_min,
-                    "description": f"Персонал отсутствует в зоне «{zone_cfg.name}» уже {absence_min} мин",
+                    **remark.to_payload(),
                 },
             ))
         return events
@@ -293,6 +297,7 @@ class ZoneTracker:
 
                 state.alerted_client_tracks.add(tid)
                 wait_min = round(wait_s / 60, 1)
+                remark = remark_guest_unattended(zone_name=zone_cfg.name, wait_min=wait_min)
                 events.append(SentinelEvent(
                     type=EventType.CLIENT_UNATTENDED,
                     camera_id=self.camera_id,
@@ -300,12 +305,13 @@ class ZoneTracker:
                     tenant_id=self.tenant_id,
                     track_id=tid,
                     person_id=known_identities.get(tid, {}).get("person_id"),
+                    confidence=1.0,  # timer rule — deterministic
                     payload={
                         "zone_id": zone_id,
                         "zone_name": zone_cfg.name,
                         "zone_type": zone_cfg.zone_type,
                         "wait_minutes": wait_min,
-                        "description": f"Клиент ожидает в «{zone_cfg.name}» {wait_min} мин без внимания персонала",
+                        **remark.to_payload(),
                     },
                 ))
         return events

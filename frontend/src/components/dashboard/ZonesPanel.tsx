@@ -75,22 +75,38 @@ export function ZonesPanel() {
     <div className="p-4 lg:p-6 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-xl font-bold" style={{ color: "var(--text)" }}>
-            Зоны наблюдения
+          <h2 className="text-xl font-bold font-display" style={{ color: "var(--text)" }}>
+            Зоны · Красная книга
           </h2>
           <p className="text-xs mt-1" style={{ color: "var(--text-dim)" }}>
-            Определите зоны на камерах для отслеживания присутствия персонала и клиентов
+            Стандарты Вай Тай: встреча Гостя, ресепшен, ожидание/чай + Telegram-замечания
           </p>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition-all"
-          style={{ background: "var(--accent)", color: "#06080f" }}
-        >
-          <Plus size={16} />
-          Добавить зону
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-medium transition-all"
+            style={{ background: "var(--accent)", color: "#061018" }}
+          >
+            <Plus size={16} />
+            Добавить зону
+          </button>
+        </div>
       </div>
+
+      {cameras.length > 0 && (
+        <div className="glass-card p-4 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+          <div>
+            <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>
+              Пресет «Вай Тай · Красная книга»
+            </p>
+            <p className="text-xs mt-1" style={{ color: "var(--text-dim)" }}>
+              Вход (45с) · Ресепшен staff (3 мин) · Ожидание/чай (90с). Потом подправьте рамки под кадр.
+            </p>
+          </div>
+          <RedBookPresetButtons cameras={cameras} onDone={reload} onError={setError} />
+        </div>
+      )}
 
       {error && (
         <div className="glass-card px-4 py-3 text-sm flex items-center gap-2" style={{ color: "var(--red)" }}>
@@ -244,8 +260,8 @@ function CreateZoneModal({
   const [zoneType, setZoneType] = useState("reception");
   const [polygonStr, setPolygonStr] = useState("[[0,0],[640,0],[640,480],[0,480]]");
   const [staffRequired, setStaffRequired] = useState(true);
-  const [maxAbsence, setMaxAbsence] = useState(5);
-  const [maxWait, setMaxWait] = useState(2);
+  const [maxAbsence, setMaxAbsence] = useState(3); // мин — Красная книга ресепшен
+  const [maxWait, setMaxWait] = useState(1); // мин — гл.3 встреча Гостя
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -416,7 +432,7 @@ function CreateZoneModal({
               type="submit"
               disabled={submitting || !name || !cameraId}
               className="w-full py-2.5 rounded-xl text-sm font-medium transition-all disabled:opacity-50"
-              style={{ background: "var(--accent)", color: "#06080f" }}
+              style={{ background: "var(--accent)", color: "#061018" }}
             >
               {submitting ? "Создание..." : "Создать зону"}
             </button>
@@ -424,5 +440,69 @@ function CreateZoneModal({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function RedBookPresetButtons({
+  cameras,
+  onDone,
+  onError,
+}: {
+  cameras: Camera[];
+  onDone: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [cameraId, setCameraId] = useState(cameras[0]?.id ?? "");
+  const [busy, setBusy] = useState(false);
+
+  const apply = async (replace: boolean) => {
+    if (!cameraId) return;
+    setBusy(true);
+    onError("");
+    try {
+      const res = await zonesApi.applyRedbookPresets(cameraId, {
+        replace_existing: replace,
+        frame_width: 1920,
+        frame_height: 1080,
+      });
+      onDone();
+      if (res.note) {
+        // soft note via error slot is ok as info — keep clean
+      }
+    } catch (err: unknown) {
+      onError(err instanceof Error ? err.message : "Не удалось применить пресет Красной книги");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+      <select
+        value={cameraId}
+        onChange={(e) => setCameraId(e.target.value)}
+        className="glass-input px-3 py-2 text-xs min-w-[160px]"
+      >
+        {cameras.map((c) => (
+          <option key={c.id} value={c.id}>{c.name || c.id}</option>
+        ))}
+      </select>
+      <button
+        disabled={busy || !cameraId}
+        onClick={() => apply(false)}
+        className="btn-accent px-3 py-2 text-xs disabled:opacity-40"
+      >
+        {busy ? "..." : "Применить пресет"}
+      </button>
+      <button
+        disabled={busy || !cameraId}
+        onClick={() => apply(true)}
+        className="glass-card-sm px-3 py-2 text-xs disabled:opacity-40"
+        style={{ color: "var(--text-dim)" }}
+        title="Удалит старые зоны этой камеры"
+      >
+        Заменить зоны
+      </button>
+    </div>
   );
 }

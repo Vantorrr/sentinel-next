@@ -33,8 +33,8 @@ class Zone(Base):
     polygon: Mapped[str] = mapped_column(Text, nullable=False)  # JSON [[x,y], ...]
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     staff_required: Mapped[bool] = mapped_column(Boolean, default=False)
-    max_absence_seconds: Mapped[int] = mapped_column(Integer, default=300)
-    max_wait_seconds: Mapped[int] = mapped_column(Integer, default=120)
+    max_absence_seconds: Mapped[int] = mapped_column(Integer, default=180)
+    max_wait_seconds: Mapped[int] = mapped_column(Integer, default=60)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(),
     )

@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sentinel.core.auth import TenantContext, get_current_tenant
 from sentinel.db.base import get_db
 from sentinel.db.models.zone import Zone, ZoneType
+from sentinel.pipeline.manager import get_manager
+from sentinel.services.llm.redbook import REDBOOK_ZONE_PRESETS, scale_preset_polygon
 
 router = APIRouter(prefix="/zones", tags=["zones"])
 
@@ -24,8 +26,8 @@ class ZoneCreate(BaseModel):
     zone_type: ZoneType = ZoneType.CUSTOM
     polygon: list[list[int]]  # [[x1,y1], [x2,y2], ...]
     staff_required: bool = False
-    max_absence_seconds: int = 300
-    max_wait_seconds: int = 120
+    max_absence_seconds: int = 180  # Красная книга: ресепшен не бросать
+    max_wait_seconds: int = 60     # Красная книга гл.3: встречать сразу
 
 
 class ZoneUpdate(BaseModel):
@@ -82,6 +84,24 @@ async def list_zones_for_camera(
     return [_zone_to_dict(z) for z in rows]
 
 
+class RedBookPresetBody(BaseModel):
+    frame_width: int = 1920
+    frame_height: int = 1080
+    replace_existing: bool = False
+
+
+@router.get("/presets/redbook")
+async def list_redbook_presets(
+    _: TenantContext = Depends(get_current_tenant),
+) -> dict:
+    """Красная книга Вай Тай — готовые шаблоны зон."""
+    return {
+        "name": "Вай Тай · Красная книга",
+        "description": "Вход + Ресепшен + Ожидание/чай с таймерами по стандарту",
+        "presets": REDBOOK_ZONE_PRESETS,
+    }
+
+
 @router.post("/camera/{camera_id}")
 async def create_zone(
     camera_id: str,
@@ -89,11 +109,11 @@ async def create_zone(
     tenant: TenantContext = Depends(get_current_tenant),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    if tenant.tenant_id == SUPERADMIN_TENANT:
-        raise HTTPException(400, "Superadmin cannot create zones — switch to tenant context")
     if len(body.polygon) < 3:
         raise HTTPException(422, "Polygon must have at least 3 points")
 
+    if tenant.tenant_id == SUPERADMIN_TENANT:
+        raise HTTPException(400, "Войдите как админ салона, чтобы создавать зоны")
     zone = Zone(
         id=str(uuid.uuid4()),
         camera_id=camera_id,
@@ -108,7 +128,67 @@ async def create_zone(
     db.add(zone)
     await db.commit()
     await db.refresh(zone)
+    try:
+        await get_manager().reload_zones(camera_id)
+    except Exception:
+        pass
     return _zone_to_dict(zone)
+
+
+@router.post("/camera/{camera_id}/presets/redbook")
+async def apply_redbook_presets(
+    camera_id: str,
+    body: RedBookPresetBody,
+    tenant: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """One-click: создать зоны Вход/Ресепшен/Ожидание по Красной книге."""
+    if tenant.tenant_id == SUPERADMIN_TENANT:
+        raise HTTPException(400, "Войдите как админ салона, чтобы применить пресет зон")
+
+    if body.replace_existing:
+        existing = (await db.execute(
+            select(Zone).where(Zone.camera_id == camera_id, Zone.tenant_id == tenant.tenant_id)
+        )).scalars().all()
+        for z in existing:
+            await db.delete(z)
+
+    created: list[dict] = []
+    for preset in REDBOOK_ZONE_PRESETS:
+        poly = scale_preset_polygon(
+            preset["polygon"], body.frame_width, body.frame_height
+        )
+        zone = Zone(
+            id=str(uuid.uuid4()),
+            camera_id=camera_id,
+            tenant_id=tenant.tenant_id,
+            name=preset["name"],
+            zone_type=ZoneType(preset["zone_type"]),
+            polygon=json.dumps(poly),
+            staff_required=bool(preset["staff_required"]),
+            max_absence_seconds=int(preset["max_absence_seconds"]),
+            max_wait_seconds=int(preset["max_wait_seconds"]),
+        )
+        db.add(zone)
+        created.append({
+            "name": zone.name,
+            "zone_type": zone.zone_type,
+            "max_wait_seconds": zone.max_wait_seconds,
+            "max_absence_seconds": zone.max_absence_seconds,
+            "hint": preset.get("hint", ""),
+        })
+
+    await db.commit()
+    try:
+        await get_manager().reload_zones(camera_id)
+    except Exception:
+        pass
+    return {
+        "camera_id": camera_id,
+        "applied": len(created),
+        "zones": created,
+        "note": "Подправьте полигоны под реальный кадр камеры после применения.",
+    }
 
 
 @router.put("/{zone_id}")
@@ -136,6 +216,10 @@ async def update_zone(
 
     await db.commit()
     await db.refresh(zone)
+    try:
+        await get_manager().reload_zones(zone.camera_id)
+    except Exception:
+        pass
     return _zone_to_dict(zone)
 
 
@@ -153,6 +237,11 @@ async def delete_zone(
     if tenant.tenant_id != SUPERADMIN_TENANT and zone.tenant_id != tenant.tenant_id:
         raise HTTPException(403, "Access denied")
 
+    cam_id = zone.camera_id
     await db.delete(zone)
     await db.commit()
+    try:
+        await get_manager().reload_zones(cam_id)
+    except Exception:
+        pass
     return {"deleted": zone_id}

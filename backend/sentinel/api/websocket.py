@@ -59,7 +59,10 @@ async def events_gateway(
             try:
                 event = await asyncio.wait_for(q.get(), timeout=30.0)
             except TimeoutError:
-                await websocket.send_json({"type": "ping"})
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
                 continue
 
             # Tenant isolation: only send events belonging to this tenant
@@ -73,7 +76,10 @@ async def events_gateway(
             if filter_cfg.event_types and event.type not in filter_cfg.event_types:
                 continue
 
-            await websocket.send_text(event.to_json())
+            try:
+                await websocket.send_text(event.to_json())
+            except Exception:
+                break
 
     except WebSocketDisconnect:
         logger.info("🔌 WS disconnected: {}", client)

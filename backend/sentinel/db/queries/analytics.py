@@ -63,7 +63,8 @@ async def get_alerts(
     start_iso: str,
     severity: str = "all",
 ) -> list[dict[str, Any]]:
-    start = datetime.fromisoformat(start_iso)
+    # '+' in query strings is often decoded as space — restore timezone offset
+    start = datetime.fromisoformat(start_iso.replace(" ", "+"))
     stmt = select(Alert).where(Alert.created_at >= start)
     if tenant_id != SUPERADMIN_TENANT:
         stmt = stmt.where(Alert.tenant_id == tenant_id)

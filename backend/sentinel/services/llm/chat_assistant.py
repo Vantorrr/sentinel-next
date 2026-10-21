@@ -18,12 +18,11 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sentinel.core.config import get_settings
+from sentinel.services.llm.redbook import redbook_system_for_chat
 
 cfg = get_settings()
 
-SYSTEM_PROMPT = """Ты — Sentinel AI Assistant. Помогаешь владельцу бизнеса 
-анализировать данные видеонаблюдения. Отвечай кратко, по делу, на русском.
-Если нужны данные — вызывай инструменты. Время всегда указывай явно."""
+SYSTEM_PROMPT = redbook_system_for_chat()
 
 TOOLS: list[dict[str, Any]] = [
     {

@@ -22,9 +22,17 @@ def _auto_device() -> str:
     return "cpu"
 
 
+# Resolve from package location so keys work whether cwd is repo root or backend/
+_REPO_ROOT = Path(__file__).resolve().parents[3]  # …/sentinel-next
+_ENV_CANDIDATES = (
+    _REPO_ROOT / ".env",
+    Path(".env"),
+)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=tuple(str(p) for p in _ENV_CANDIDATES if p.exists()) or (".env",),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

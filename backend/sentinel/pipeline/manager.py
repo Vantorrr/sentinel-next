@@ -137,6 +137,7 @@ class PipelineManager:
                 "name": cam.name,
                 "url": cam.url,
                 "location_id": cam.location_id,
+                "tenant_id": cam.tenant_id,
                 "enabled": cam.enabled,
                 "running": cam.id in self._tasks and not self._tasks[cam.id].done(),
             }

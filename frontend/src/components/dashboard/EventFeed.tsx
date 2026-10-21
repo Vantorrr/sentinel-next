@@ -40,17 +40,17 @@ const EVENT_META: Record<EventType, { label: string; color: string; icon: Lucide
   "face.unknown": { label: "Незнакомец", color: "var(--yellow)", icon: Scan },
   "client.entered": { label: "Клиент вошёл", color: "var(--green)", icon: UserPlus },
   "client.left": { label: "Клиент ушёл", color: "var(--text-dim)", icon: PersonStanding },
-  "vip.detected": { label: "VIP!", color: "#a78bfa", icon: Star },
+  "vip.detected": { label: "VIP!", color: "var(--green)", icon: Star },
   "staff.detected": { label: "Персонал", color: "var(--accent)", icon: Users },
   "fraud.alert": { label: "ТРЕВОГА", color: "var(--red)", icon: ShieldAlert },
   "zone.violation": { label: "Нарушение зоны", color: "var(--red)", icon: Ban },
   "zone.entered": { label: "Вошёл в зону", color: "var(--accent)", icon: MapPin },
   "zone.exited": { label: "Покинул зону", color: "var(--text-dim)", icon: MapPinOff },
-  "staff.absent": { label: "Персонал отсутствует", color: "var(--red)", icon: UserMinus },
-  "client.unattended": { label: "Клиент ждёт", color: "var(--yellow)", icon: Clock },
+  "staff.absent": { label: "Замечание: ресепшен пуст", color: "var(--red)", icon: UserMinus },
+  "client.unattended": { label: "Замечание: Гость без встречи", color: "var(--yellow)", icon: Clock },
   "heatmap.update": { label: "Тепловая карта", color: "var(--text-dim)", icon: Eye },
   "occupancy.update": { label: "Заполненность", color: "var(--accent)", icon: Users },
-  "llm.summary": { label: "AI Сводка", color: "#a78bfa", icon: Brain },
+  "llm.summary": { label: "AI Сводка", color: "var(--ai)", icon: Brain },
   "camera.online": { label: "Камера онлайн", color: "var(--green)", icon: Camera },
   "camera.offline": { label: "Камера офлайн", color: "var(--red)", icon: CameraOff },
   "pipeline.error": { label: "Ошибка", color: "var(--red)", icon: AlertTriangle },
@@ -187,21 +187,29 @@ function EventRow({ event, animate }: { event: SentinelEvent; animate: boolean }
       className="rounded-xl px-3 py-2 flex items-start gap-2.5 cursor-default group transition-colors"
       style={{
         background: isAlert
-          ? "rgba(255,59,92,0.06)"
+          ? "rgba(251,113,133,0.07)"
           : isLLM
-            ? "rgba(167,139,250,0.06)"
+            ? "rgba(94,234,212,0.06)"
             : "var(--surface-2)",
-        border: `1px solid ${isAlert ? "rgba(255,59,92,0.15)" : isLLM ? "rgba(167,139,250,0.15)" : "transparent"}`,
+        border: `1px solid ${isAlert ? "rgba(251,113,133,0.18)" : isLLM ? "rgba(94,234,212,0.15)" : "transparent"}`,
       }}
     >
       <div className="mt-0.5 shrink-0" style={{ color: meta.color }}>
         <Icon size={14} strokeWidth={1.5} />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[11px] font-medium" style={{ color: meta.color }}>
             {meta.label}
           </span>
+          {typeof event.payload.chapter === "string" && (
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded-md font-mono"
+              style={{ background: "rgba(251,113,133,0.12)", color: "var(--red)" }}
+            >
+              {(event.payload.chapter as string).slice(0, 28)}
+            </span>
+          )}
           <span className="text-[10px] font-mono truncate" style={{ color: "var(--text-dim)" }}>
             {event.camera_id}
           </span>
@@ -216,7 +224,13 @@ function EventRow({ event, animate }: { event: SentinelEvent; animate: boolean }
 
         {isAlert && typeof event.payload.description === "string" && (
           <div className="text-[11px] mt-0.5 leading-snug" style={{ color: "var(--text)" }}>
-            {(event.payload.description as string).slice(0, 120)}
+            {(event.payload.description as string).slice(0, 160)}
+            {(event.payload.description as string).length > 160 && "…"}
+          </div>
+        )}
+        {isAlert && typeof event.payload.action === "string" && (
+          <div className="text-[10px] mt-1 leading-snug" style={{ color: "var(--accent)" }}>
+            → {(event.payload.action as string).slice(0, 100)}
           </div>
         )}
 

@@ -15,6 +15,10 @@ const CAMERAS = ["cam-вход", "cam-зал", "cam-касса"];
 let demoInterval: ReturnType<typeof setInterval> | null = null;
 let eventCounter = 0;
 
+export function isDemoModeActive(): boolean {
+  return demoInterval !== null;
+}
+
 function makeEvent(
   type: EventType,
   cameraIdx: number,
@@ -42,7 +46,8 @@ function makeEvent(
 export function startDemoMode() {
   if (demoInterval) return;
   const store = useSentinelStore.getState();
-  store.setWsConnected(true);
+  // Do not fake wsConnected — real WS must still be able to take over
+  store.setWsConnected(false);
 
   let tick = 0;
 

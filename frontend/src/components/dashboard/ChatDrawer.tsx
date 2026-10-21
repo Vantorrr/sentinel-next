@@ -153,10 +153,10 @@ export function ChatDrawer({ onClose }: { onClose: () => void }) {
         {/* Header */}
         <div className="flex items-center gap-3 px-4 py-4 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
           <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center glow-purple"
-            style={{ background: "rgba(124,58,237,0.2)", border: "1px solid rgba(124,58,237,0.4)" }}
+            className="w-8 h-8 rounded-xl flex items-center justify-center"
+            style={{ background: "rgba(94,234,212,0.12)", border: "1px solid rgba(94,234,212,0.28)" }}
           >
-            <Bot size={16} style={{ color: "#a78bfa" }} />
+            <Bot size={16} style={{ color: "var(--ai)" }} />
           </div>
           <div>
             <p className="text-sm font-semibold">AI Ассистент</p>

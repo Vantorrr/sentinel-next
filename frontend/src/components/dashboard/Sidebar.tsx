@@ -42,74 +42,68 @@ export function Sidebar({ activeTab, onTabChange, onChatToggle, showAdmin }: Pro
 
   return (
     <>
-      {/* ── Desktop sidebar (lg+) ──────────────────────────────── */}
-      <aside className="hidden lg:flex w-60 flex-col py-4 border-r shrink-0 glass-surface">
-        {/* Logo */}
+      <aside className="hidden lg:flex w-64 flex-col py-5 border-r shrink-0 glass-surface relative z-[2]">
         <div className="px-4 mb-6 flex items-center gap-3">
           <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 glow-cyan"
-            style={{ background: "var(--accent)" }}
+            className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 glow-cyan"
+            style={{ background: "linear-gradient(135deg, #22d3ee, #2dd4bf)" }}
           >
-            <ShieldAlert size={17} color="#06080f" strokeWidth={2.5} />
+            <ShieldAlert size={18} color="#061018" strokeWidth={2.5} />
           </div>
           <div>
-            <p className="font-bold text-sm tracking-wide" style={{ color: "var(--text)" }}>
+            <p className="font-display font-bold text-[15px] tracking-wide" style={{ color: "var(--text)" }}>
               SENTINEL
             </p>
-            <p className="text-[10px] font-mono" style={{ color: "var(--text-dim)" }}>
-              v2026
+            <p className="text-[10px] font-mono tracking-wider" style={{ color: "var(--text-dim)" }}>
+              NEXT · 2026
             </p>
           </div>
         </div>
 
-        {/* Occupancy counter */}
-        <div className="mx-3 mb-5 px-3 py-3 rounded-xl glass-card-sm flex items-center justify-between">
-          <span className="text-xs" style={{ color: "var(--text-dim)" }}>В зале</span>
-          <span className="text-2xl font-bold font-mono" style={{ color: "var(--accent)" }}>
+        <div className="mx-3 mb-5 px-3.5 py-3.5 rounded-2xl glass-card-sm flex items-center justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.14em] font-mono" style={{ color: "var(--text-dim)" }}>
+              В зале
+            </p>
+            <p className="text-[11px] mt-0.5" style={{ color: "var(--text-muted)" }}>сейчас онлайн</p>
+          </div>
+          <span className="text-3xl font-bold font-mono" style={{ color: "var(--accent)" }}>
             {occupancy}
           </span>
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 flex flex-col gap-0.5 px-2">
+        <nav className="flex-1 flex flex-col gap-1 px-2.5">
           {tabs.map(({ id, label, icon: Icon }) => {
             const active = activeTab === id;
-            const isAdmin = id === "admin";
             return (
               <button
                 key={id}
                 onClick={() => onTabChange(id)}
                 aria-label={label}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 w-full text-left"
+                className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all duration-200 w-full text-left ${
+                  active ? "glass-nav-active" : ""
+                }`}
                 style={{
-                  background: active
-                    ? isAdmin ? "rgba(192,132,252,0.12)" : "var(--accent-dim)"
-                    : "transparent",
-                  color: active
-                    ? isAdmin ? "#c084fc" : "var(--accent)"
-                    : "var(--text-dim)",
-                  border: active
-                    ? `1px solid ${isAdmin ? "rgba(192,132,252,0.25)" : "rgba(0,229,255,0.15)"}`
-                    : "1px solid transparent",
+                  background: active ? undefined : "transparent",
+                  color: active ? undefined : "var(--text-dim)",
+                  border: active ? undefined : "1px solid transparent",
                 }}
               >
-                <Icon size={18} strokeWidth={active ? 2.5 : 1.5} />
+                <Icon size={18} strokeWidth={active ? 2.4 : 1.6} />
                 <span className="text-sm font-medium">{label}</span>
               </button>
             );
           })}
         </nav>
 
-        {/* AI Chat */}
-        <div className="px-2 mt-3 space-y-2">
+        <div className="px-2.5 mt-3 space-y-2">
           <button
             onClick={onChatToggle}
             aria-label="AI Ассистент"
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all w-full text-left glow-purple"
+            className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all w-full text-left glass-card-sm"
             style={{
-              background: "rgba(124,58,237,0.1)",
-              color: "#a78bfa",
-              border: "1px solid rgba(124,58,237,0.25)",
+              color: "var(--ai)",
+              borderColor: "rgba(94,234,212,0.22)",
             }}
           >
             <Bot size={18} />
@@ -120,11 +114,10 @@ export function Sidebar({ activeTab, onTabChange, onChatToggle, showAdmin }: Pro
             <button
               onClick={clearAlerts}
               aria-label={`${unreadAlerts} алертов — очистить`}
-              className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs w-full"
+              className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs w-full glass-card-sm"
               style={{
-                background: "rgba(255,59,92,0.08)",
                 color: "var(--red)",
-                border: "1px solid rgba(255,59,92,0.25)",
+                borderColor: "rgba(251,113,133,0.25)",
               }}
             >
               <ShieldAlert size={14} />
@@ -136,40 +129,35 @@ export function Sidebar({ activeTab, onTabChange, onChatToggle, showAdmin }: Pro
         </div>
       </aside>
 
-      {/* ── Mobile bottom nav (< lg) ──────────────────────────── */}
       <nav
-        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 glass-surface border-t flex items-stretch justify-around"
+        className="lg:hidden fixed bottom-0 left-0 right-0 z-40 glass-surface border-t flex items-stretch overflow-x-auto no-scrollbar"
         style={{
-          height: 60,
+          height: 64,
           paddingBottom: "env(safe-area-inset-bottom, 0px)",
           borderColor: "var(--glass-border)",
+          WebkitOverflowScrolling: "touch",
         }}
       >
         {tabs.map(({ id, label, icon: Icon }) => {
           const active = activeTab === id;
-          const isAdmin = id === "admin";
           return (
             <button
               key={id}
               onClick={() => onTabChange(id)}
               aria-label={label}
-              className="flex flex-col items-center justify-center gap-0.5 flex-1 min-w-[40px] min-h-[44px] transition-colors duration-150"
-              style={{
-                color: active
-                  ? isAdmin ? "#c084fc" : "var(--accent)"
-                  : "var(--text-dim)",
-              }}
+              className="flex flex-col items-center justify-center gap-1 shrink-0 min-w-[56px] px-2 min-h-[44px] transition-colors duration-150"
+              style={{ color: active ? "var(--accent)" : "var(--text-dim)" }}
             >
-              <Icon size={18} strokeWidth={active ? 2.5 : 1.5} />
-              <span className="text-[9px] font-medium leading-none">{label}</span>
+              <Icon size={18} strokeWidth={active ? 2.4 : 1.6} />
+              <span className="text-[9px] font-medium leading-none whitespace-nowrap">{label}</span>
             </button>
           );
         })}
         <button
           onClick={onChatToggle}
           aria-label="AI Ассистент"
-          className="flex flex-col items-center justify-center gap-0.5 flex-1 min-w-[40px] min-h-[44px]"
-          style={{ color: "#a78bfa" }}
+          className="flex flex-col items-center justify-center gap-1 shrink-0 min-w-[56px] px-2 min-h-[44px]"
+          style={{ color: "var(--ai)" }}
         >
           <Bot size={18} />
           <span className="text-[9px] font-medium leading-none">AI</span>

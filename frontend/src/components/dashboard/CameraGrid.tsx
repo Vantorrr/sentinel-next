@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSentinelStore } from "@/lib/store";
 import {
   Camera,
@@ -53,6 +53,21 @@ export function CameraGrid({ compact = false }: { compact?: boolean }) {
   const setCameras = useSentinelStore((s) => s.setCameras);
   const activeTracks = useSentinelStore((s) => s.activeTracks);
   const [adding, setAdding] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    camerasApi
+      .list()
+      .then((list) => {
+        if (!cancelled) setCameras(list);
+      })
+      .catch(() => {
+        /* store stays empty until WS/demo */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [setCameras]);
 
   async function removeCamera(id: string) {
     try {
@@ -170,8 +185,11 @@ export function CameraGrid({ compact = false }: { compact?: boolean }) {
         {cameras.length === 0 && (
           <div className="col-span-full rounded-xl flex flex-col items-center justify-center py-12 text-center glass-card">
             <Camera size={32} style={{ color: "var(--text-dim)", marginBottom: 8 }} className="opacity-30" />
-            <p className="text-sm" style={{ color: "var(--text-dim)" }}>
-              Нет подключённых камер
+            <p className="text-sm font-medium" style={{ color: "var(--text)" }}>
+              Подключите камеры салона
+            </p>
+            <p className="text-xs mt-1.5 max-w-sm" style={{ color: "var(--text-dim)" }}>
+              RTSP (Hikvision / Dahua) или Hik-Connect — живой поток, не демо.
             </p>
             <button
               onClick={() => setAdding(true)}

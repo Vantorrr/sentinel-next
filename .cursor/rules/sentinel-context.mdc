@@ -43,6 +43,16 @@ Multi-tenant AI surveillance SaaS. Central server + edge agents in salons. 120+ 
 - **ZoneTracker** (`services/ai/zone_tracker.py`): Point-in-polygon, staff absence, client unattended.
 - **Events**: `zone.entered`, `zone.exited`, `staff.absent`, `client.unattended`
 - **TelegramNotifier**: Alerts via Bot API. `/start <api_key>` auto-links chat_id.
+- Defaults (Красная книга Вай Тай): reception max_absence=180s, max_wait=60s.
+
+## Красная книга Вай Тай (AI compliance) — TURNKEY
+
+- Knowledge: `services/llm/redbook.py` + `docs/RED_BOOK_AI.md`
+- Remarks: `RB-CH3-UNATTENDED`, `RB-CH11-RECEPTION-EMPTY` with chapter + action
+- TelegramNotifier formats Red Book remarks (critical cooldown 60s)
+- Zone presets: `POST /zones/camera/{id}/presets/redbook` (entrance/reception/waiting)
+- Score: `GET /analytics/redbook/remarks` + Overview widget
+- Deterministic timers = exact; pose/uniform CV not claimed 100%
 
 ## Key Conventions
 

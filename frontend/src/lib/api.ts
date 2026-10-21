@@ -287,6 +287,13 @@ export const zonesApi = {
     req<Zone>(`/zones/${zoneId}`, { method: "PUT", body: JSON.stringify(body) }),
   delete: (zoneId: string) =>
     req<{ deleted: string }>(`/zones/${zoneId}`, { method: "DELETE" }),
+  redbookPresets: () =>
+    req<{ name: string; description: string; presets: Array<Record<string, unknown>> }>("/zones/presets/redbook"),
+  applyRedbookPresets: (cameraId: string, body?: { frame_width?: number; frame_height?: number; replace_existing?: boolean }) =>
+    req<{ camera_id: string; applied: number; zones: Array<Record<string, unknown>>; note: string }>(
+      `/zones/camera/${cameraId}/presets/redbook`,
+      { method: "POST", body: JSON.stringify(body ?? {}) },
+    ),
 };
 
 // ── Telegram ────────────────────────────────────────────────────
@@ -301,6 +308,15 @@ export const tenantApi = {
 
 // ── Analytics ───────────────────────────────────────────────────────────────
 
+export interface RedBookRemarksResponse {
+  total: number;
+  critical: number;
+  score: number;
+  standard: string;
+  remarks: Alert[];
+  note: string;
+}
+
 export const analyticsApi = {
   visits: (start: string, end: string, category = "all") =>
     req<Visit[]>(`/analytics/visits?start=${start}&end=${end}&category=${category}`),
@@ -310,6 +326,8 @@ export const analyticsApi = {
     req<OccupancyPoint[]>(`/analytics/occupancy?date=${date}`),
   summaries: (location?: string, limit = 20) =>
     req<NarrativeSummary[]>(`/analytics/summaries?${location ? `location_id=${location}&` : ""}limit=${limit}`),
+  redbookRemarks: (start: string) =>
+    req<RedBookRemarksResponse>(`/analytics/redbook/remarks?start=${encodeURIComponent(start)}`),
 };
 
 // ── Chat ────────────────────────────────────────────────────────────────────

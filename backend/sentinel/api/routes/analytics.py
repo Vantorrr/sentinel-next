@@ -57,3 +57,24 @@ async def summaries(
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     return await get_latest_summaries(db, tenant.tenant_id, location_id, limit)
+
+
+@router.get("/redbook/remarks")
+async def redbook_remarks(
+    start: str = Query(..., description="ISO datetime"),
+    tenant: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Замечания Красной книги за период (из alerts)."""
+    alerts = await get_alerts(db, tenant.tenant_id, start, "all")
+    redbook_types = {"staff.absent", "client.unattended", "zone.violation", "fraud.alert"}
+    remarks = [a for a in alerts if a.get("type") in redbook_types]
+    critical = [a for a in remarks if a.get("severity") == "high"]
+    return {
+        "total": len(remarks),
+        "critical": len(critical),
+        "score": max(0, 100 - len(critical) * 15 - (len(remarks) - len(critical)) * 5),
+        "standard": "Красная книга Вай Тай",
+        "remarks": remarks[:100],
+        "note": "Оценка по таймерам зон (детерминировано). Поза «вай»/униформа — отдельно.",
+    }

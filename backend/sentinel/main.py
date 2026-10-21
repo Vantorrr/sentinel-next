@@ -8,8 +8,8 @@ Startup sequence:
   2. Connect EventBus (Redis)
   3. Load AI models (YOLO, InsightFace)
   4. Start DBWriter + LLM Summarizer background tasks
-  5. Seed superadmin user if not exists
-  6. Optional: start demo camera if DEMO_MODE=true
+  5. Seed superadmin + default salon tenant if not exists
+  6. Load cameras from DB (DEMO_MODE only adds synthetic cam — off in product)
 """
 
 from __future__ import annotations
@@ -103,31 +103,66 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 # ── Seed superadmin ──────────────────────────────────────────────────────────
 
-async def _seed_superadmin() -> None:
-    """Create default superadmin user if none exists."""
+async def _seed_bootstrap() -> None:
+    """Seed platform superadmin + first salon (Вай Тай) for product use."""
+    import secrets
+
     from sqlalchemy import select
     from sentinel.db.base import AsyncSessionLocal
-    from sentinel.db.models.tenant import User
+    from sentinel.db.models.tenant import Tenant, TenantPlan, User
 
     async with AsyncSessionLocal() as session:
+        # Platform operator
         result = await session.execute(
             select(User).where(User.role == "superadmin").limit(1)
         )
-        if result.scalar_one_or_none():
-            return
+        if not result.scalar_one_or_none():
+            session.add(User(
+                id=str(uuid.uuid4()),
+                tenant_id=None,
+                email="admin@sentinel.ai",
+                password_hash=hash_password("admin"),
+                name="Superadmin",
+                role="superadmin",
+                is_active=True,
+            ))
+            logger.info("🔐 Superadmin seeded: admin@sentinel.ai / admin (CHANGE PASSWORD!)")
 
-        admin = User(
-            id=str(uuid.uuid4()),
-            tenant_id=None,
-            email="admin@sentinel.ai",
-            password_hash=hash_password("admin"),
-            name="Superadmin",
-            role="superadmin",
-            is_active=True,
-        )
-        session.add(admin)
+        # Product salon — not a demo camera, a real tenant to attach RTSP/Hik cams
+        salon = (await session.execute(
+            select(Tenant).where(Tenant.slug == "vaitai")
+        )).scalar_one_or_none()
+        if not salon:
+            salon = Tenant(
+                id=str(uuid.uuid4()),
+                name="Вай Тай",
+                slug="vaitai",
+                api_key=f"sk-{secrets.token_hex(24)}",
+                plan=TenantPlan.PRO,
+                max_cameras=16,
+                is_active=True,
+                contact_email="salon@vaitai.ai",
+            )
+            session.add(salon)
+            await session.flush()
+            logger.info("🏢 Salon tenant seeded: Вай Тай (slug=vaitai)")
+
+        salon_admin = (await session.execute(
+            select(User).where(User.email == "salon@vaitai.ai")
+        )).scalar_one_or_none()
+        if not salon_admin:
+            session.add(User(
+                id=str(uuid.uuid4()),
+                tenant_id=salon.id,
+                email="salon@vaitai.ai",
+                password_hash=hash_password("salon"),
+                name="Админ салона",
+                role="admin",
+                is_active=True,
+            ))
+            logger.info("🔐 Salon admin seeded: salon@vaitai.ai / salon (CHANGE PASSWORD!)")
+
         await session.commit()
-        logger.info("🔐 Superadmin seeded: admin@sentinel.ai / admin (CHANGE PASSWORD!)")
 
 
 # ── Lifespan ─────────────────────────────────────────────────────────────────
@@ -205,7 +240,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         tg_task = asyncio.create_task(tg_notifier.run(), name="telegram-notifier")
         logger.opt(colors=True).info("📱 <green>Telegram notifier</green> enabled")
 
-    await _seed_superadmin()
+    await _seed_bootstrap()
 
     # Auto-load persisted cameras from DB
     try:
