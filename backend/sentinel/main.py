@@ -315,6 +315,8 @@ app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cfg.CORS_ORIGINS,
+    # Quick tunnels for MVP demos (cloudflared / ngrok) while Railway is down
+    allow_origin_regex=r"https://.*\.(trycloudflare\.com|ngrok-free\.app|ngrok\.io|loca\.lt)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
