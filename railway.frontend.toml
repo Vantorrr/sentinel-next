@@ -1,0 +1,11 @@
+# Frontend service config-as-code.
+# When adding the 2nd Railway service from the same repo:
+# Settings → Config-as-code path = railway.frontend.toml
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.frontend"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
