@@ -9,6 +9,18 @@ if [ -z "${DATABASE_URL:-}" ] && [ -z "${POSTGRES_URL:-}" ] && [ -z "${POSTGRESQ
   exit 1
 fi
 
+if [ -z "${REDIS_URL:-}" ] && [ -z "${REDIS_PRIVATE_URL:-}" ]; then
+  echo "❌ REDIS_URL is not set."
+  echo "   Railway → + New → Database → Redis"
+  echo "   backend Variables → Add Reference → Redis → REDIS_URL"
+  exit 1
+fi
+
+# Prefer private URL when Railway injects both
+if [ -n "${REDIS_PRIVATE_URL:-}" ] && [ -z "${REDIS_URL:-}" ]; then
+  export REDIS_URL="$REDIS_PRIVATE_URL"
+fi
+
 echo "🛡  Sentinel-Next — migrating DB…"
 alembic upgrade head
 

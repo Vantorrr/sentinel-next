@@ -86,12 +86,29 @@ class EventBus:
         return cls._instance
 
     async def connect(self) -> None:
-        self._pub = aioredis.from_url(self._redis_url, decode_responses=True)
-        sub_conn = aioredis.from_url(self._redis_url, decode_responses=True)
-        self._sub = sub_conn.pubsub()
-        await self._sub.subscribe(CHANNEL_ALL)
+        url = (self._redis_url or "").strip()
+        if not url or "localhost:6379" in url or "127.0.0.1:6379" in url:
+            # Still allow local dev defaults; on Railway this must be a real service URL
+            import os
+            if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_SERVICE_NAME"):
+                raise RuntimeError(
+                    "REDIS_URL is missing or still points to localhost. "
+                    "Railway → + New → Database → Redis, then backend Variables → "
+                    "Add Reference → Redis → REDIS_URL (or REDIS_PRIVATE_URL)."
+                )
+        try:
+            self._pub = aioredis.from_url(url, decode_responses=True)
+            sub_conn = aioredis.from_url(url, decode_responses=True)
+            self._sub = sub_conn.pubsub()
+            await self._sub.subscribe(CHANNEL_ALL)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cannot connect to Redis at {url!r}. "
+                "Add a Redis service in the same Railway project and set REDIS_URL "
+                "via Variable Reference."
+            ) from exc
         asyncio.create_task(self._dispatch_loop(), name="eventbus-dispatch")
-        logger.info("📡 EventBus connected — redis={}", self._redis_url)
+        logger.info("📡 EventBus connected — redis={}", url)
 
     async def disconnect(self) -> None:
         if self._sub:

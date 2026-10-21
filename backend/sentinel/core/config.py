@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel"
 
     # ── Redis ─────────────────────────────────────────────────────────────────
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_URL: str = "redis://localhost:6379/0"  # on Railway set via Redis plugin reference
 
     # ── Qdrant ────────────────────────────────────────────────────────────────
     QDRANT_URL: str = "http://localhost:6333"
@@ -119,6 +119,22 @@ class Settings(BaseSettings):
         if isinstance(v, str) and v.strip():
             return normalize_database_url(v.strip())
         return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def _redis_from_railway(cls, data: object) -> object:
+        # Railway Redis plugin may expose REDIS_PRIVATE_URL / REDIS_URL
+        if isinstance(data, dict):
+            if not data.get("REDIS_URL"):
+                alt = data.get("REDIS_PRIVATE_URL") or __import__("os").environ.get("REDIS_PRIVATE_URL")
+                if alt:
+                    data["REDIS_URL"] = alt
+        elif not __import__("os").environ.get("REDIS_URL"):
+            alt = __import__("os").environ.get("REDIS_PRIVATE_URL")
+            if alt:
+                # pydantic v2 before-validator on model may get mapping; env is read automatically
+                pass
+        return data
 
     @model_validator(mode="after")
     def _resolve_device(self) -> "Settings":
