@@ -114,12 +114,10 @@ class Settings(BaseSettings):
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def _normalize_database_url(cls, v: str) -> str:
-        # Railway injects postgres:// — SQLAlchemy async needs asyncpg
-        if isinstance(v, str):
-            if v.startswith("postgres://"):
-                return v.replace("postgres://", "postgresql+asyncpg://", 1)
-            if v.startswith("postgresql://") and "+asyncpg" not in v:
-                return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        from sentinel.db.url import normalize_database_url
+
+        if isinstance(v, str) and v.strip():
+            return normalize_database_url(v.strip())
         return v
 
     @model_validator(mode="after")

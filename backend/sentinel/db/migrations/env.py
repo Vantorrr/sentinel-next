@@ -1,5 +1,4 @@
 import asyncio
-import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -10,18 +9,14 @@ import sentinel.db.models.person   # noqa: F401
 import sentinel.db.models.tenant   # noqa: F401
 import sentinel.db.models.camera   # noqa: F401
 import sentinel.db.models.zone     # noqa: F401
+from sentinel.db.url import resolve_database_url
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
-db_url = os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
-# Railway / Heroku often inject postgres:// — async SQLAlchemy needs asyncpg
-if db_url and db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
-elif db_url and db_url.startswith("postgresql://") and "+asyncpg" not in db_url:
-    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+db_url = resolve_database_url()
 
 
 def run_migrations_offline() -> None:
