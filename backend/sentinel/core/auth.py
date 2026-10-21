@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from loguru import logger
-from passlib.context import CryptContext
+import bcrypt
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,8 +41,6 @@ cfg = get_settings()
 
 _ALGORITHM = "HS256"
 _TOKEN_EXPIRE_HOURS = 72
-
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 _bearer = HTTPBearer(auto_error=False)
@@ -70,14 +68,17 @@ class TokenPayload(BaseModel):
     exp: datetime | None = None
 
 
-# ── Password helpers ─────────────────────────────────────────────────────────
+# ── Password helpers (bcrypt directly — passlib breaks on bcrypt>=4.1) ───────
 
 def hash_password(raw: str) -> str:
-    return _pwd_ctx.hash(raw)
+    return bcrypt.hashpw(raw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(raw: str, hashed: str) -> bool:
-    return _pwd_ctx.verify(raw, hashed)
+    try:
+        return bcrypt.checkpw(raw.encode("utf-8"), hashed.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 
 # ── JWT helpers ──────────────────────────────────────────────────────────────
