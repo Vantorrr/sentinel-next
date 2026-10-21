@@ -14,12 +14,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Layer 1: deps only (cached unless pyproject.toml changes)
-COPY pyproject.toml .
-RUN pip install --upgrade pip hatchling && pip install .
+ENV PYTHONPATH=/app
 
-# Layer 2: full source (includes alembic + migrations)
+# Full source first — hatchling needs the `sentinel` package on disk to install it
 COPY . .
+RUN pip install --upgrade pip hatchling \
+    && pip install .
 
 # Pre-download YOLO nano weights
 RUN mkdir -p /app/data/models /app/data/snapshots /app/logs \

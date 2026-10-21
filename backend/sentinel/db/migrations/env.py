@@ -17,6 +17,11 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 db_url = os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+# Railway / Heroku often inject postgres:// — async SQLAlchemy needs asyncpg
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+elif db_url and db_url.startswith("postgresql://") and "+asyncpg" not in db_url:
+    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 
 def run_migrations_offline() -> None:
