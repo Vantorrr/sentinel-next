@@ -74,24 +74,67 @@ class ChatAssistant:
     def __init__(self, db_session: AsyncSession, tenant_id: str = "legacy") -> None:
         self._session = db_session
         self._tenant_id = tenant_id
-        self._api_key = cfg.ANTHROPIC_API_KEY
-
-    def _get_client(self):  # type: ignore[no-untyped-def]
-        import anthropic  # lazy import
-        return anthropic.AsyncAnthropic(api_key=self._api_key)
+        self._provider = cfg.LLM_PROVIDER
+        self._or_key = (cfg.OPENROUTER_API_KEY or "").strip()
+        self._oa_key = (cfg.OPENAI_API_KEY or "").strip()
+        self._ant_key = (cfg.ANTHROPIC_API_KEY or "").strip()
+        if self._or_key or self._provider == "openrouter":
+            self._provider = "openrouter"
+        elif self._provider == "openai" and self._oa_key:
+            self._provider = "openai"
+        elif self._ant_key:
+            self._provider = "anthropic"
+        elif self._oa_key:
+            self._provider = "openai"
 
     async def ask(self, question: str, history: list[dict[str, str]] | None = None) -> str:
-        if not self._api_key:
-            return "LLM не настроен — задайте ANTHROPIC_API_KEY в переменных окружения."
+        if self._provider == "anthropic" and not self._ant_key:
+            return "LLM не настроен — задайте OPENROUTER_API_KEY или ANTHROPIC_API_KEY."
+        if self._provider in ("openai", "openrouter") and not (self._or_key or self._oa_key):
+            return "LLM не настроен — задайте OPENROUTER_API_KEY или OPENAI_API_KEY."
 
         try:
-            return await self._ask_llm(question, history)
+            if self._provider in ("openai", "openrouter"):
+                return await self._ask_openai_compatible(question, history)
+            return await self._ask_anthropic(question, history)
         except Exception as exc:
             logger.error("Chat LLM error: {}", exc)
-            return f"Ошибка связи с AI: сервис временно недоступен. Попробуйте позже."
+            return "Ошибка связи с AI: сервис временно недоступен. Попробуйте позже."
 
-    async def _ask_llm(self, question: str, history: list[dict[str, str]] | None = None) -> str:
-        client = self._get_client()
+    async def _ask_openai_compatible(
+        self, question: str, history: list[dict[str, str]] | None = None
+    ) -> str:
+        from openai import AsyncOpenAI
+
+        kwargs: dict[str, str] = {"api_key": self._or_key or self._oa_key}
+        base = (cfg.OPENAI_BASE_URL or "").strip()
+        if self._provider == "openrouter" or self._or_key or "openrouter.ai" in base:
+            kwargs["base_url"] = base or "https://openrouter.ai/api/v1"
+        elif base:
+            kwargs["base_url"] = base
+        client = AsyncOpenAI(**kwargs)
+
+        model = cfg.LLM_MODEL
+        if "claude" in model.lower() and "/" not in model:
+            model = "openai/gpt-4o-mini"
+
+        messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        for m in history or []:
+            if m.get("role") in ("user", "assistant") and m.get("content"):
+                messages.append({"role": m["role"], "content": m["content"]})
+        messages.append({"role": "user", "content": question})
+
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=messages,  # type: ignore[arg-type]
+            max_tokens=1024,
+        )
+        return (resp.choices[0].message.content or "").strip() or "Нет данных."
+
+    async def _ask_anthropic(self, question: str, history: list[dict[str, str]] | None = None) -> str:
+        import anthropic
+
+        client = anthropic.AsyncAnthropic(api_key=self._ant_key)
         messages: list[dict[str, Any]] = list(history or [])
         messages.append({"role": "user", "content": question})
 

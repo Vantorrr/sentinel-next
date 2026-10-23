@@ -40,7 +40,7 @@ class SceneSummarizer:
         self._init_clients()
 
     def _init_clients(self) -> None:
-        if cfg.ANTHROPIC_API_KEY:
+        if cfg.ANTHROPIC_API_KEY and cfg.LLM_PROVIDER == "anthropic":
             try:
                 import anthropic
                 self._anthropic_client = anthropic.AsyncAnthropic(api_key=cfg.ANTHROPIC_API_KEY)
@@ -48,16 +48,28 @@ class SceneSummarizer:
             except ImportError:
                 logger.warning("anthropic package not installed")
 
-        if cfg.OPENAI_API_KEY:
+        or_key = (cfg.OPENROUTER_API_KEY or "").strip()
+        oa_key = (cfg.OPENAI_API_KEY or "").strip()
+        base = (cfg.OPENAI_BASE_URL or "").strip()
+        if or_key or (oa_key and (base or cfg.LLM_PROVIDER in ("openai", "openrouter"))):
             try:
                 from openai import AsyncOpenAI
-                self._openai_client = AsyncOpenAI(api_key=cfg.OPENAI_API_KEY)
-                logger.info("🧠 LLM: OpenAI GPT configured as fallback")
+                kwargs: dict[str, str] = {
+                    "api_key": or_key or oa_key,
+                }
+                if or_key or cfg.LLM_PROVIDER == "openrouter" or "openrouter.ai" in base:
+                    kwargs["base_url"] = base or "https://openrouter.ai/api/v1"
+                elif base:
+                    kwargs["base_url"] = base
+                self._openai_client = AsyncOpenAI(**kwargs)
+                logger.info("🧠 LLM: OpenAI-compatible configured (base={})", kwargs.get("base_url", "default"))
             except ImportError:
                 logger.warning("openai package not installed")
 
         if not self._anthropic_client and not self._openai_client:
-            logger.warning("⚠️  No LLM API key set — summaries disabled. Set ANTHROPIC_API_KEY in .env")
+            logger.warning(
+                "⚠️  No LLM API key — set OPENROUTER_API_KEY or ANTHROPIC_API_KEY / OPENAI_API_KEY"
+            )
 
     # ── Main loop ──────────────────────────────────────────────────────────────
 
@@ -170,8 +182,11 @@ class SceneSummarizer:
             return resp.content[0].text  # type: ignore[union-attr]
 
         if self._openai_client:
+            model = cfg.LLM_MODEL
+            if cfg.LLM_PROVIDER in ("openai", "openrouter") and "/" not in model and "claude" in model.lower():
+                model = "openai/gpt-4o-mini"
             resp = await self._openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=model,
                 response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},

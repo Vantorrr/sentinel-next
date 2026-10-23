@@ -74,7 +74,10 @@ class Settings(BaseSettings):
     # ── LLM ──────────────────────────────────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
-    LLM_PROVIDER: Literal["anthropic", "openai"] = "anthropic"
+    # OpenRouter: set OPENROUTER_API_KEY (preferred) or reuse OPENAI_API_KEY + base URL
+    OPENROUTER_API_KEY: str = ""
+    OPENAI_BASE_URL: str = ""  # e.g. https://openrouter.ai/api/v1
+    LLM_PROVIDER: Literal["anthropic", "openai", "openrouter"] = "anthropic"
     LLM_MODEL: str = "claude-3-5-sonnet-20241022"
     LLM_SUMMARIZE_EVERY_SECONDS: int = 30
 
