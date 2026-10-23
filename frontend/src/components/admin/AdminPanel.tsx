@@ -696,7 +696,10 @@ function TelegramSetup({ tenantApiKey }: { tenantApiKey: string }) {
         </ol>
 
         <p className="font-medium pt-1" style={{ color: "var(--text)" }}>Подключить салон к боту:</p>
-        <p>Откройте вашего бота в Telegram и отправьте команду:</p>
+        <p>
+          Без API-ключа бот ничего не покажет (только приветствие).
+          Откройте бота и отправьте команду — появятся кнопки: статус, алерты, история, сводка:
+        </p>
       </div>
 
       <div
