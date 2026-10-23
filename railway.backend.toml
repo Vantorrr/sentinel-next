@@ -1,5 +1,5 @@
-# Backend service — zero UI settings.
-# Railway picks this file + root Dockerfile automatically.
+# Backend service config-as-code.
+# Railway → sentinel-next-back → Settings → Config-as-code path = railway.backend.toml
 
 [build]
 builder = "DOCKERFILE"
