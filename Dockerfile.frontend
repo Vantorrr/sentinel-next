@@ -31,8 +31,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
-# Railway injects PORT (often 8080). Do NOT hardcode 3000 — that causes 502.
+# Railway proxy requires 0.0.0.0 + process.env.PORT (injected, often 8080).
 ENV HOSTNAME=0.0.0.0
+ENV PORT=8080
 EXPOSE 8080
 
-CMD ["sh", "-c", "node server.js"]
+# Echo bind so Deploy Logs prove the port; then start Next standalone.
+CMD ["sh", "-c", "echo \"▶ Next listening on ${HOSTNAME}:${PORT}\" && exec node server.js"]
