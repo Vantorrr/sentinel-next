@@ -24,5 +24,7 @@ fi
 echo "🛡  Sentinel-Next — migrating DB…"
 alembic upgrade head
 
-echo "🛡  Sentinel-Next — starting API on :${PORT:-8000}"
-exec uvicorn sentinel.main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers 1
+# Railway provides PORT (commonly 8080). Fall back only for local docker.
+PORT="${PORT:-8080}"
+echo "🛡  Sentinel-Next — starting API on :${PORT}"
+exec uvicorn sentinel.main:app --host 0.0.0.0 --port "${PORT}" --workers 1

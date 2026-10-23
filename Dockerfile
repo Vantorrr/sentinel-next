@@ -29,9 +29,10 @@ RUN mkdir -p /app/data/models /app/data/snapshots /app/logs
 COPY backend/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-EXPOSE 8000
+# Railway sets PORT at runtime (often 8080). Entrypoint binds uvicorn to $PORT.
+EXPOSE 8080
 
 HEALTHCHECK --interval=15s --timeout=5s --retries=3 \
-    CMD curl -sf http://localhost:${PORT:-8000}/health || exit 1
+    CMD curl -sf http://localhost:${PORT:-8080}/health || exit 1
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
