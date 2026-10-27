@@ -230,7 +230,12 @@ class HikConnectClient:
         local_ip = ""
         wan_ip = ""
         optionals = status.get("optionals") or {}
-        candidates = [status, optionals]
+        if isinstance(optionals, str):
+            try:
+                optionals = json.loads(optionals)
+            except json.JSONDecodeError:
+                optionals = {}
+        candidates: list[Any] = [status, optionals]
         conn = optionals.get("connection") or optionals.get("CONNECTION") or status.get("connection")
         if isinstance(conn, str):
             try:
@@ -239,6 +244,14 @@ class HikConnectClient:
                 conn = {}
         if isinstance(conn, dict):
             candidates.append(conn)
+        # Nested JSON strings commonly stored in optionals
+        for key in ("localIp", "wanIp", "netIp", "CONNECTION", "Wifi"):
+            raw = optionals.get(key)
+            if isinstance(raw, str) and raw.strip().startswith("{"):
+                try:
+                    candidates.append(json.loads(raw))
+                except json.JSONDecodeError:
+                    pass
 
         for blob in candidates:
             if not isinstance(blob, dict):
@@ -247,10 +260,15 @@ class HikConnectClient:
                 val = blob.get(key) or ""
                 if isinstance(val, str) and val and not val.startswith("0."):
                     local_ip = local_ip or val
-            for key in ("wanIp", "wanIP", "externalIp", "netIp", "wan_ip"):
+            for key in ("wanIp", "wanIP", "externalIp", "wan_ip"):
                 val = blob.get(key) or ""
                 if isinstance(val, str) and val and not val.startswith("0."):
                     wan_ip = wan_ip or val
+        # Flat optionals fields
+        if not wan_ip and isinstance(optionals.get("wanIp"), str):
+            wan_ip = optionals["wanIp"]
+        if not local_ip and isinstance(optionals.get("localIp"), str):
+            local_ip = optionals["localIp"]
         return local_ip, wan_ip
 
     async def get_devices(self) -> list[HikDevice]:

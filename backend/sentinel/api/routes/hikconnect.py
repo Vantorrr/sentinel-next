@@ -297,3 +297,85 @@ async def dump_device_status(
         "isapi": isapi_tries,
     }
 
+
+
+@router.get("/probe-capture/{serial}")
+async def probe_capture(
+    serial: str,
+    channel: int = 1,
+    _: TenantContext = Depends(require_superadmin),
+) -> dict:
+    """Try alternate cloud capture/stream endpoints (superadmin)."""
+    client = get_hikconnect_client()
+    if not client:
+        raise HTTPException(400, "Hik-Connect не подключён")
+    await client._ensure_session()
+    results = []
+    paths = [
+        ("GET", f"/v3/devices/{serial}/{channel}/capture?channelNo={channel}"),
+        ("GET", f"/v3/userdevices/v1/cameras/capture?deviceSerial={serial}&channelNo={channel}"),
+        ("POST", "/v3/devices/capture/image", {"deviceSerial": serial, "channelNo": channel}),
+        ("GET", f"/v3/alarms/image?deviceSerial={serial}&channelNo={channel}"),
+        ("POST", "/v3/streaming/device/token", {"deviceSerial": serial, "channelNo": channel}),
+        ("POST", "/v3/vtm/token", {"deviceSerial": serial, "channelNo": channel}),
+        ("GET", f"/v3/devices/{serial}/status"),
+        ("POST", "/v3/open/live/address/get", {"deviceSerial": serial, "channelNo": channel, "protocol": 2, "quality": 2}),
+        ("POST", "/api/lapp/v2/live/address/get", {"deviceSerial": serial, "channelNo": channel, "protocol": 2}),
+    ]
+    for method, path, *rest in [(p[0], p[1], p[2] if len(p)>2 else None) for p in [
+        ("GET", f"/v3/devices/{serial}/{channel}/capture?channelNo={channel}"),
+        ("GET", f"/v3/userdevices/v1/cameras/capture?deviceSerial={serial}&channelNo={channel}"),
+        ("POST", "/v3/devices/capture/image"),
+        ("POST", "/v3/streaming/device/token"),
+        ("POST", "/v3/vtm/token"),
+        ("POST", "/v3/open/live/address/get"),
+    ]]:
+        form = None
+        if method == "POST":
+            if "capture/image" in path:
+                form = {"deviceSerial": serial, "channelNo": channel}
+            elif "token" in path:
+                form = {"deviceSerial": serial, "channelNo": channel}
+            elif "live/address" in path:
+                form = {"deviceSerial": serial, "channelNo": channel, "protocol": 2, "quality": 2, "type": 1}
+        try:
+            if method == "GET":
+                data = await client._api_get(path)
+            else:
+                data = await client._api_post_form(path, form or {})
+            results.append({"method": method, "path": path, "data": data})
+        except Exception as exc:
+            results.append({"method": method, "path": path, "error": str(exc)})
+    # Also try EZVIZ RU hosts with same sessionId
+    ez_hosts = [
+        "https://apiirus.ezvizru.com",
+        "https://api.ezvizru.com",
+        "https://open.ezvizru.com",
+    ]
+    for host in ez_hosts:
+        for path in [
+            f"/v3/userdevices/v1/cameras/capture?deviceSerial={serial}&channelNo={channel}",
+            "/v3/streaming/previewParam",
+        ]:
+            try:
+                if path.endswith("previewParam"):
+                    resp = await client._http.post(
+                        f"{host}{path}",
+                        data={
+                            "deviceSerial": serial,
+                            "channelNo": channel,
+                            "streamType": 2,
+                            "protocol": 2,
+                            "quality": 2,
+                        },
+                    )
+                else:
+                    resp = await client._http.get(f"{host}{path}")
+                try:
+                    payload = resp.json()
+                except Exception:
+                    payload = {"text": resp.text[:300]}
+                results.append({"host": host, "path": path, "status": resp.status_code, "data": payload})
+            except Exception as exc:
+                results.append({"host": host, "path": path, "error": str(exc)})
+    return {"serial": serial, "channel": channel, "results": results}
