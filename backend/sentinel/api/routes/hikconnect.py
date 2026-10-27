@@ -246,3 +246,54 @@ async def debug_hikconnect_stream(
     except Exception as exc:
         logger.error("Hik debug-stream error: {}", exc)
         raise HTTPException(500, "Ошибка диагностики потока")
+
+
+@router.get("/dump-status/{serial}")
+async def dump_device_status(
+    serial: str,
+    _: TenantContext = Depends(require_superadmin),
+) -> dict:
+    """Raw device statusInfos + ISAPI probe (superadmin)."""
+    client = get_hikconnect_client()
+    if not client:
+        raise HTTPException(400, "Hik-Connect не подключён")
+    devices = await client.get_devices()
+    # re-fetch raw pagelist page containing serial
+    data = await client._api_get(
+        "/v3/userdevices/v1/devices/pagelist?groupId=-1&limit=50&offset=0"
+        "&filter=TIME_PLAN,CONNECTION,SWITCH,STATUS,STATUS_EXT,WIFI,NODISTURB,P2P,KMS,HIDDNS"
+    )
+    status = (data.get("statusInfos") or {}).get(serial)
+    info = next((d for d in (data.get("deviceInfos") or []) if d.get("deviceSerial") == serial), None)
+    isapi_tries = {}
+    for path in [
+        "GET /ISAPI/System/deviceInfo",
+        "GET /ISAPI/System/Network/interfaces",
+        "GET /ISAPI/Streaming/channels/102/picture",
+        "GET /ISAPI/ContentMgmt/StreamingProxy/channels/101/picture",
+    ]:
+        try:
+            resp = await client.isapi(serial, path, channel=1)
+            ctype = resp.headers.get("content-type", "")
+            body = resp.content
+            preview = body[:200]
+            try:
+                preview_s = body.decode("utf-8", errors="replace")[:500]
+            except Exception:
+                preview_s = str(preview)
+            isapi_tries[path] = {
+                "status_code": resp.status_code,
+                "content_type": ctype,
+                "bytes": len(body),
+                "preview": preview_s,
+                "jpeg": body[:3] == b"\xff\xd8\xff",
+            }
+        except Exception as exc:
+            isapi_tries[path] = {"error": str(exc)}
+    return {
+        "deviceInfo": info,
+        "statusInfo": status,
+        "parsed": next(({"name": d.name, "local_ip": d.local_ip, "wan_ip": d.wan_ip} for d in devices if d.serial == serial), None),
+        "isapi": isapi_tries,
+    }
+
