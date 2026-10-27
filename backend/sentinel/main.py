@@ -191,8 +191,8 @@ async def _ezviz_stream_refresh_loop() -> None:
                 for cam in ezviz_cameras:
                     try:
                         stream = await client.get_live_stream_url(
-                            device_serial=cam.ezviz_serial,  # type: ignore[arg-type]
-                            channel_no=cam.ezviz_channel or 1,
+                            serial=cam.ezviz_serial,  # type: ignore[arg-type]
+                            channel=cam.ezviz_channel or 1,
                         )
                         if stream.url and stream.url != cam.url:
                             cam.url = stream.url

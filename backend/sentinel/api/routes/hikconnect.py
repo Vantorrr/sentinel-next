@@ -222,4 +222,27 @@ async def refresh_hikconnect_stream(
             fps_inference=record.fps_inference or 10,
         ))
 
-    return {"refreshed": camera_id, "url": (stream.url or record.url)[:60] + "..."}
+    return {
+        "refreshed": camera_id,
+        "url": (stream.url or record.url)[:80] + ("..." if len(stream.url or record.url or "") > 80 else ""),
+        "protocol": stream.protocol,
+    }
+
+
+@router.get("/debug-stream/{serial}")
+async def debug_hikconnect_stream(
+    serial: str,
+    channel: int = 1,
+    _: TenantContext = Depends(require_superadmin),
+) -> dict:
+    """Raw Hik stream probe (superadmin) — diagnose empty cloud URLs."""
+    client = get_hikconnect_client()
+    if not client:
+        raise HTTPException(400, "Hik-Connect не подключён")
+    try:
+        return await client.debug_stream(serial, channel)
+    except HikConnectError as exc:
+        raise HTTPException(400, f"Hik-Connect: {exc.message}")
+    except Exception as exc:
+        logger.error("Hik debug-stream error: {}", exc)
+        raise HTTPException(500, "Ошибка диагностики потока")
