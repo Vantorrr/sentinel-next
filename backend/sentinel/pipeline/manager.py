@@ -46,6 +46,7 @@ class PipelineManager:
         # Bumped on every start and stop so an in-flight _start_camera cannot
         # install a processor after remove/reimport.
         self._generations: dict[str, int] = {}
+        self._model_lock = asyncio.Lock()
 
     async def startup(self) -> None:
         # Lazy AI load: Railway/small VMs OOM if YOLO+InsightFace warm at boot.
@@ -58,21 +59,48 @@ class PipelineManager:
             return
         await self._ensure_models()
 
+    def _models_ready(self) -> bool:
+        return (
+            self._detection is not None
+            and self._detection.ready
+            and self._reid is not None
+            and self._reid.ready
+        )
+
+    def _drop_unready_models(self) -> None:
+        """A cancelled or failed load must not stick as a non-ready singleton."""
+        if self._detection is not None and not self._detection.ready:
+            self._detection = None
+        if self._reid is not None and not self._reid.ready:
+            self._reid = None
+
+    async def _load_service(self, current: Any, factory: Any) -> Any:
+        if current is not None and current.ready:
+            return current
+        service = factory()
+        await service.load()
+        if not service.ready:
+            raise RuntimeError("AI service load returned before it was ready")
+        return service
+
     async def _ensure_models(self) -> None:
-        if self._detection is not None and self._reid is not None:
+        if self._models_ready():
             return
-        logger.info("🚀 Loading AI models (YOLO + InsightFace)…")
-        try:
-            if self._detection is None:
-                self._detection = DetectionService()
-                await self._detection.load()
-            if self._reid is None:
-                self._reid = FaceReIDService()
-                await self._reid.load()
+        async with self._model_lock:
+            if self._models_ready():
+                return
+            logger.info("🚀 Loading AI models (YOLO + InsightFace)…")
+            try:
+                self._detection = await self._load_service(self._detection, DetectionService)
+                self._reid = await self._load_service(self._reid, FaceReIDService)
+            except asyncio.CancelledError:
+                self._drop_unready_models()
+                raise
+            except Exception as exc:
+                self._drop_unready_models()
+                logger.error("AI model load failed: {} — cameras will not process frames", exc)
+                raise
             logger.success("✅ AI models ready")
-        except Exception as exc:
-            logger.error("AI model load failed: {} — cameras will not process frames", exc)
-            raise
 
     async def shutdown(self) -> None:
         logger.info("🛑 PipelineManager shutdown — cancelling {} camera tasks", len(self._tasks))
