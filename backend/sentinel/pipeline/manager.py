@@ -46,7 +46,10 @@ class PipelineManager:
         # Bumped on every start and stop so an in-flight _start_camera cannot
         # install a processor after remove/reimport.
         self._generations: dict[str, int] = {}
-        self._model_lock = asyncio.Lock()
+        # One physical weight load for the process. Cancelling a camera does not
+        # cancel this task: run_in_executor keeps running after the await is dropped.
+        self._model_flight: asyncio.Task[None] | None = None
+        self._closing = False
 
     async def startup(self) -> None:
         # Lazy AI load: Railway/small VMs OOM if YOLO+InsightFace warm at boot.
@@ -83,27 +86,39 @@ class PipelineManager:
             raise RuntimeError("AI service load returned before it was ready")
         return service
 
+    async def _run_model_flight(self) -> None:
+        """Own the only in-flight weight load. Camera tasks only wait on it."""
+        try:
+            logger.info("🚀 Loading AI models (YOLO + InsightFace)…")
+            self._detection = await self._load_service(self._detection, DetectionService)
+            self._reid = await self._load_service(self._reid, FaceReIDService)
+            if not self._models_ready():
+                raise RuntimeError("AI service load returned before it was ready")
+            logger.success("✅ AI models ready")
+        except asyncio.CancelledError:
+            self._drop_unready_models()
+            raise
+        except Exception as exc:
+            self._drop_unready_models()
+            logger.error("AI model load failed: {} — cameras will not process frames", exc)
+            raise
+
     async def _ensure_models(self) -> None:
         if self._models_ready():
             return
-        async with self._model_lock:
-            if self._models_ready():
-                return
-            logger.info("🚀 Loading AI models (YOLO + InsightFace)…")
-            try:
-                self._detection = await self._load_service(self._detection, DetectionService)
-                self._reid = await self._load_service(self._reid, FaceReIDService)
-            except asyncio.CancelledError:
-                self._drop_unready_models()
-                raise
-            except Exception as exc:
-                self._drop_unready_models()
-                logger.error("AI model load failed: {} — cameras will not process frames", exc)
-                raise
-            logger.success("✅ AI models ready")
+        flight = self._model_flight
+        if flight is None or flight.done():
+            if self._closing:
+                raise RuntimeError("AI model load rejected: manager is shutting down")
+            flight = asyncio.create_task(self._run_model_flight(), name="model-flight")
+            self._model_flight = flight
+        # shield: cancelling the camera must not cancel the executor load,
+        # and must not let the next camera allocate a second copy.
+        await asyncio.shield(flight)
 
     async def shutdown(self) -> None:
         logger.info("🛑 PipelineManager shutdown — cancelling {} camera tasks", len(self._tasks))
+        self._closing = True
         for camera_id in list(self._generations):
             self._bump_generation(camera_id)
         pending = [task for task in self._tasks.values() if not task.done()]
@@ -112,6 +127,8 @@ class PipelineManager:
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         self._tasks.clear()
+        # The model flight is intentionally not cancelled. Its worker thread
+        # cannot be stopped, and a second flight must not start over it.
 
     def add_camera(self, config: CameraConfig, *, start: bool = True) -> None:
         if config.id in self._tasks and not self._tasks[config.id].done():

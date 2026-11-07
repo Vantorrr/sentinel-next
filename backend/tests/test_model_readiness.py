@@ -121,11 +121,14 @@ async def test_cancel_during_warmup_then_next_camera_detects(patched):
 
     assert manager.remove_camera("first") is True
     await _until(lambda: "first" not in manager._tasks)
-    assert manager._detection is None
-    assert manager._reid is None
+    assert _Det.loads == 1
+    flight = manager._model_flight
+    assert flight is not None and not flight.done()
 
     manager.add_camera(_cam("second"))
+    gate.set()
     await _until(lambda: any(p.state.frames_received == 1 for p in _Probe.created))
+    assert _Det.loads == 1
 
     probe = _Probe.created[-1]
     assert probe.result == ["person"]
@@ -146,12 +149,14 @@ async def test_waiting_camera_finishes_load_if_holder_is_cancelled(patched):
     manager.add_camera(_cam("holder"))
     await entered.wait()
     manager.add_camera(_cam("waiter"))
-    await _until(lambda: manager._model_lock.locked())
+    await _until(lambda: manager._model_flight is not None and not manager._model_flight.done())
 
     manager.remove_camera("holder")
+    assert _Det.loads == 1
+    gate.set()
     await _until(lambda: any(p.result == ["person"] for p in _Probe.created))
 
-    assert _Det.loads == 2
+    assert _Det.loads == 1
     assert manager._detection is not None and manager._detection.ready
     assert _Probe.created[-1].result == ["person"]
     assert "holder" not in manager._cameras

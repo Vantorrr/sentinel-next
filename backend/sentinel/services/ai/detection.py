@@ -53,7 +53,9 @@ class DetectionService:
         return self._ready
 
     async def load(self) -> None:
-        loop = asyncio.get_event_loop()
+        # Cancelling this await does not stop _load_model. PipelineManager keeps
+        # a single flight so a second camera cannot start another weight load.
+        loop = asyncio.get_running_loop()
         logger.info("🤖 Loading YOLOv11 — model={} device={}", cfg.YOLO_MODEL, cfg.YOLO_DEVICE)
         t0 = time.monotonic()
         self._model = await loop.run_in_executor(self._executor, self._load_model)
