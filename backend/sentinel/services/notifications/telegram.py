@@ -439,21 +439,32 @@ class TelegramNotifier:
 
         manager = get_manager()
         cams = [c for c in manager.list_cameras() if c.get("tenant_id") == tenant_id]
-        running = sum(1 for c in cams if c.get("running"))
+        receiving = sum(1 for c in cams if c.get("running"))
         name = html.escape(self._tenant_names.get(tenant_id, "Салон"))
 
         lines = [
             f"📊 <b>Статус · {name}</b>",
             "━━━━━━━━━━━━━━━━━━━━",
-            f"📷 Камеры: <b>{running}/{len(cams)}</b> активны",
+            f"📷 Камеры с кадром: <b>{receiving}/{len(cams)}</b>",
             f"🔗 Telegram: подключён",
             f"🕒 {time.strftime('%d.%m.%Y %H:%M')}",
         ]
+        marks = {"online": "🟢", "demo": "🟢", "connecting": "🟡", "unreachable": "⚪", "offline": "⚪"}
+        labels = {
+            "connecting": "ждём кадр",
+            "unreachable": "нет маршрута",
+            "offline": "нет кадра",
+        }
         if cams:
             lines.append("")
             for c in cams[:12]:
-                mark = "🟢" if c.get("running") else "⚪"
-                lines.append(f"{mark} {html.escape(str(c.get('name') or c.get('id')))}")
+                status_name = str(
+                    c.get("stream_status") or ("online" if c.get("running") else "offline")
+                )
+                mark = marks.get(status_name, "⚪")
+                suffix = labels.get(status_name, "")
+                title = html.escape(str(c.get("name") or c.get("id")))
+                lines.append(f"{mark} {title}" + (f" — {suffix}" if suffix else ""))
         else:
             lines.append("\nКамер пока нет — добавьте в кабинете Sentinel.")
 

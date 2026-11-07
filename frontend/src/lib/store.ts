@@ -44,6 +44,11 @@ export interface Camera {
   location_id: string;
   enabled: boolean;
   running: boolean;
+  stream_status?: string;
+  frames_received?: number;
+  last_error?: string;
+  host_class?: string;
+  requirement?: string;
 }
 
 export interface NarrativeSummary {

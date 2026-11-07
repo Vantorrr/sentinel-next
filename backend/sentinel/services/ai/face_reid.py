@@ -53,6 +53,8 @@ class FaceReIDService:
         loop = asyncio.get_event_loop()
         logger.info("🧠 Loading InsightFace ReID — model={}", cfg.FACE_REID_MODEL)
         t0 = time.monotonic()
+        # Same boundary as YOLO: cancelling this await leaves the thread running.
+        # PipelineManager single-flights the load so a second service is not built.
         self._app = await loop.run_in_executor(self._executor, self._load_insightface)
         try:
             from qdrant_client import AsyncQdrantClient  # lazy

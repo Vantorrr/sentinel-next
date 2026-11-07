@@ -564,8 +564,8 @@ function SetupGuide() {
           <div className="space-y-2">
             <p className="font-medium text-xs" style={{ color: "var(--accent)" }}>3. Hik-Connect (камеры через облако)</p>
             <div className="glass-card-sm p-2.5 space-y-1.5">
-              <p>Используйте тот же логин и пароль, что в приложении <b>Hik-Connect</b> на телефоне.</p>
-              <p>Камеры подключаются через интернет — не нужен проброс портов.</p>
+              <p>Используйте тот же логин и пароль, что в приложении <b>Hik-Connect</b> на телефоне. Это список устройств, не сам видеопоток.</p>
+              <p>Онлайн — только после кадра на этом сервере. Частный адрес регистратора сюда не подставляется: для салона нужен edge в той же сети либо RTSP, до которого есть маршрут.</p>
               <div className="font-mono text-[10px] px-2 py-1.5 rounded-lg mt-1" style={{ background: "var(--surface-2)", color: "var(--accent)" }}>
                 HIKCONNECT_EMAIL=your@email.com<br/>
                 HIKCONNECT_PASSWORD=your_password<br/>

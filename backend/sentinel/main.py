@@ -190,10 +190,16 @@ async def _ezviz_stream_refresh_loop() -> None:
 
                 for cam in ezviz_cameras:
                     try:
+                        from sentinel.pipeline.stream_target import assess_hik_stream
+
                         stream = await client.get_live_stream_url(
                             serial=cam.ezviz_serial,  # type: ignore[arg-type]
                             channel=cam.ezviz_channel or 1,
                         )
+                        verdict = assess_hik_stream(stream.url, stream.protocol)
+                        if not verdict.ok:
+                            logger.info("EZVIZ refresh skipped for {}: {}", cam.id, verdict.code)
+                            continue
                         if stream.url and stream.url != cam.url:
                             cam.url = stream.url
                             manager = get_manager()
@@ -263,7 +269,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
             from sentinel.services.hikconnect.client import init_hikconnect
             await init_hikconnect(cfg.HIKCONNECT_EMAIL, cfg.HIKCONNECT_PASSWORD, cfg.HIKCONNECT_REGION)
-            logger.opt(colors=True).info("📹 <green>Hik-Connect</green> cloud connected ({})", cfg.HIKCONNECT_EMAIL)
+            logger.opt(colors=True).info("📹 <green>Hik-Connect</green> cloud connected")
             ezviz_refresh_task = asyncio.create_task(
                 _ezviz_stream_refresh_loop(), name="ezviz-refresh"
             )

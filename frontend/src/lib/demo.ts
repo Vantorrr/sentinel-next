@@ -53,9 +53,9 @@ export function startDemoMode() {
 
   // Seed some initial cameras
   store.setCameras([
-    { id: "cam-вход", name: "Вход", url: "demo", location_id: "demo", enabled: true, running: true },
-    { id: "cam-зал", name: "Зал", url: "demo", location_id: "demo", enabled: true, running: true },
-    { id: "cam-касса", name: "Касса", url: "demo", location_id: "demo", enabled: true, running: true },
+    { id: "cam-вход", name: "Вход", url: "demo", location_id: "demo", enabled: true, running: true, stream_status: "demo", frames_received: 1 },
+    { id: "cam-зал", name: "Зал", url: "demo", location_id: "demo", enabled: true, running: true, stream_status: "demo", frames_received: 1 },
+    { id: "cam-касса", name: "Касса", url: "demo", location_id: "demo", enabled: true, running: true, stream_status: "demo", frames_received: 1 },
   ]);
 
   // Initial heatmap

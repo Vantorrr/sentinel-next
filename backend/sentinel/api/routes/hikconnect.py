@@ -16,6 +16,11 @@ from sentinel.db.base import get_db
 from sentinel.db.models.camera import CameraRecord
 from sentinel.pipeline.camera import CameraConfig
 from sentinel.pipeline.manager import get_manager
+from sentinel.pipeline.stream_target import (
+    assess_hik_stream,
+    hik_upsert_action,
+    redact_stream_url,
+)
 from sentinel.services.hikconnect.client import (
     HikConnectError,
     get_hikconnect_client,
@@ -121,29 +126,71 @@ async def import_hikconnect_camera(
 ) -> dict:
     """Import a camera from Hik-Connect cloud into Sentinel."""
     if tenant.tenant_id == "__all__":
-        raise HTTPException(400, "Выберите салон (не суперадмин) для импорта камеры")
+        raise HTTPException(
+            400,
+            "Superadmin cannot import cameras. "
+            "Войдите пользователем салона: переключения салона нет.",
+        )
 
     client = get_hikconnect_client()
     if not client:
         raise HTTPException(400, "Hik-Connect не подключён")
 
-    stream_url = ""
     try:
         stream = await client.get_live_stream_url(
             serial=body.device_serial,
             channel=body.channel_no,
             quality=body.quality,
         )
-        stream_url = stream.url
     except HikConnectError as exc:
-        logger.warning("Cloud stream failed: {}, will try RTSP fallback", exc.message)
+        raise HTTPException(422, detail={
+            "code": "cloud_stream_unavailable",
+            "message": f"Облако не отдало поток: {exc.message}",
+            "host_class": "",
+            "requirement": "edge_same_lan",
+        })
 
-    if not stream_url:
-        logger.info("No cloud stream for {}, using placeholder for RTSP setup", body.device_serial)
-        stream_url = f"rtsp://admin@<LOCAL_IP>:554/Streaming/Channels/{body.channel_no}01"
+    verdict = assess_hik_stream(stream.url, stream.protocol)
+    if not verdict.ok:
+        logger.info("Hik import rejected: {} {}", body.device_serial, verdict.code)
+        raise HTTPException(422, detail=verdict.as_detail())
 
+    stream_url = stream.url
     cam_id = f"hik-{body.device_serial}-ch{body.channel_no}"
     cam_name = body.name or f"Hik {body.device_serial} CH{body.channel_no}"
+    fps = 10 if body.quality == 2 else 5
+
+    existing = await db.get(CameraRecord, cam_id)
+    action = hik_upsert_action(
+        existing.tenant_id if existing else None,
+        tenant.tenant_id,
+    )
+    if action == "forbidden":
+        raise HTTPException(403, "Access denied")
+
+    if existing is None:
+        existing = CameraRecord(
+            id=cam_id,
+            tenant_id=tenant.tenant_id,
+            url=stream_url,
+            name=cam_name,
+            location_id=body.location_id,
+            fps_inference=fps,
+            enabled=True,
+            ezviz_serial=body.device_serial,
+            ezviz_channel=body.channel_no,
+        )
+        db.add(existing)
+    else:
+        existing.url = stream_url
+        existing.name = cam_name
+        existing.location_id = body.location_id
+        existing.fps_inference = fps
+        existing.enabled = True
+        existing.ezviz_serial = body.device_serial
+        existing.ezviz_channel = body.channel_no
+
+    await db.commit()
 
     config = CameraConfig(
         id=cam_id,
@@ -151,34 +198,33 @@ async def import_hikconnect_camera(
         location_id=body.location_id,
         name=cam_name,
         tenant_id=tenant.tenant_id,
-        fps_inference=10 if body.quality == 2 else 5,
+        fps_inference=fps,
     )
-
     manager = get_manager()
+    # Replace runtime only after the row is committed. A failed insert must
+    # leave a legacy placeholder exactly as it was.
+    manager.remove_camera(cam_id)
     manager.add_camera(config)
 
-    record = CameraRecord(
-        id=cam_id,
-        tenant_id=tenant.tenant_id,
-        url=stream_url,
-        name=cam_name,
-        location_id=body.location_id,
-        fps_inference=config.fps_inference,
-        enabled=True,
-        ezviz_serial=body.device_serial,
-        ezviz_channel=body.channel_no,
+    row = next((c for c in manager.list_cameras() if c["id"] == cam_id), None)
+    logger.info(
+        "Imported Hik-Connect camera: {} status={}",
+        cam_id,
+        (row or {}).get("stream_status"),
     )
-    db.add(record)
-    await db.commit()
-
-    logger.info("Imported Hik-Connect camera: {} ({})", cam_id, cam_name)
     return {
         "id": cam_id,
         "name": cam_name,
-        "url": stream_url[:60] + "..." if len(stream_url) > 60 else stream_url,
+        "url": redact_stream_url(stream_url),
         "location_id": body.location_id,
-        "running": True,
+        "running": bool(row and row.get("running")),
         "enabled": True,
+        "stream_status": (row or {}).get("stream_status", "connecting"),
+        "frames_received": (row or {}).get("frames_received", 0),
+        "host_class": (row or {}).get("host_class", ""),
+        "requirement": (row or {}).get("requirement", ""),
+        "last_error": (row or {}).get("last_error", ""),
+        "message": "Кадр ещё не получен. Онлайн появится только после первого кадра.",
     }
 
 
@@ -207,7 +253,19 @@ async def refresh_hikconnect_stream(
     except HikConnectError as exc:
         raise HTTPException(400, f"Ошибка обновления: {exc.message}")
 
-    if stream.url:
+    verdict = assess_hik_stream(stream.url, stream.protocol)
+    if not verdict.ok:
+        return {
+            "refreshed": False,
+            "camera_id": camera_id,
+            "code": verdict.code,
+            "message": verdict.message,
+            "protocol": stream.protocol,
+            "url": redact_stream_url(record.url),
+            "lan_substituted": False,
+        }
+
+    if stream.url != record.url:
         record.url = stream.url
         await db.commit()
 
@@ -223,9 +281,12 @@ async def refresh_hikconnect_stream(
         ))
 
     return {
-        "refreshed": camera_id,
-        "url": (stream.url or record.url)[:80] + ("..." if len(stream.url or record.url or "") > 80 else ""),
+        "refreshed": True,
+        "camera_id": camera_id,
+        "url": redact_stream_url(stream.url),
         "protocol": stream.protocol,
+        "message": "Адрес потока обновлён. Онлайн только после кадра.",
+        "lan_substituted": False,
     }
 
 
