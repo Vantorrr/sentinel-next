@@ -43,6 +43,9 @@ class PipelineManager:
         self._reid: FaceReIDService | None = None
         self._heatmap = HeatmapService()
         self._states: dict[str, StreamState] = {}
+        # Bumped on every start and stop so an in-flight _start_camera cannot
+        # install a processor after remove/reimport.
+        self._generations: dict[str, int] = {}
 
     async def startup(self) -> None:
         # Lazy AI load: Railway/small VMs OOM if YOLO+InsightFace warm at boot.
@@ -73,10 +76,13 @@ class PipelineManager:
 
     async def shutdown(self) -> None:
         logger.info("🛑 PipelineManager shutdown — cancelling {} camera tasks", len(self._tasks))
-        for task in self._tasks.values():
+        for camera_id in list(self._generations):
+            self._bump_generation(camera_id)
+        pending = [task for task in self._tasks.values() if not task.done()]
+        for task in pending:
             task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
         self._tasks.clear()
 
     def add_camera(self, config: CameraConfig, *, start: bool = True) -> None:
@@ -86,6 +92,7 @@ class PipelineManager:
         if config.id not in self._cameras and len(self._cameras) >= cfg.MAX_CAMERAS:
             raise RuntimeError(f"Max cameras reached ({cfg.MAX_CAMERAS})")
 
+        self._bump_generation(config.id)
         target = classify_stream_url(config.url)
         state = StreamState(
             host_class=target.host_class,
@@ -104,46 +111,84 @@ class PipelineManager:
             return
 
         self._tracking_pool[config.id] = TrackingService(max_age=cfg.TRACK_MAX_AGE)
-        asyncio.create_task(self._start_camera(config, state))
+        generation = self._generations[config.id]
+        starter = asyncio.create_task(
+            self._start_camera(config, state, generation),
+            name=f"start-{config.id}",
+        )
+        self._tasks[config.id] = starter
+        starter.add_done_callback(lambda t, cid=config.id: self._on_task_done(cid, t))
 
-    async def _start_camera(self, config: CameraConfig, state: StreamState) -> None:
-        """Load zones then start the processor task."""
+    def _bump_generation(self, camera_id: str) -> int:
+        generation = self._generations.get(camera_id, 0) + 1
+        self._generations[camera_id] = generation
+        return generation
+
+    def _is_current(self, camera_id: str, generation: int, state: StreamState) -> bool:
+        return (
+            self._generations.get(camera_id) == generation
+            and self._states.get(camera_id) is state
+        )
+
+    async def _start_camera(
+        self,
+        config: CameraConfig,
+        state: StreamState,
+        generation: int,
+    ) -> None:
+        """Load zones then start the processor task.
+
+        The starter itself is the owned task until the processor replaces it.
+        remove/reimport cancels that task and bumps generation, so a late
+        resume cannot publish into a newer StreamState.
+        """
         try:
             await self._ensure_models()
+            if not self._is_current(config.id, generation, state):
+                return
+            try:
+                zone_configs = await load_zones_for_camera(config.id)
+            except Exception as exc:
+                logger.warning("Failed to load zones for camera {}: {}", config.id, exc)
+                zone_configs = []
+            if not self._is_current(config.id, generation, state):
+                return
+
+            zt = ZoneTracker(
+                camera_id=config.id,
+                location_id=config.location_id,
+                tenant_id=config.tenant_id,
+                zones=zone_configs,
+            )
+            self._zone_trackers[config.id] = zt
+
+            reader = CameraReader(config, state)
+            processor = CameraProcessor(
+                reader=reader,
+                detection_svc=self._detection,  # type: ignore[arg-type]
+                tracking_svc=self._tracking_pool[config.id],
+                reid_svc=self._reid,  # type: ignore[arg-type]
+                heatmap_svc=self._heatmap,
+                bus=self._bus,
+                zone_tracker=zt,
+            )
+            worker = asyncio.create_task(processor.run(), name=f"cam-{config.id}")
+            if not self._is_current(config.id, generation, state):
+                worker.cancel()
+                return
+            self._tasks[config.id] = worker
+            worker.add_done_callback(lambda t, cid=config.id: self._on_task_done(cid, t))
+            logger.info(
+                "📷 Camera '{}' reader started ({})",
+                config.id, state.host_class or "unknown",
+            )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
-            state.status = "offline"
-            state.last_error = "Модели ИИ не загрузились, поток не запущен"
+            if self._is_current(config.id, generation, state):
+                state.status = "offline"
+                state.last_error = "Модели ИИ не загрузились, поток не запущен"
             logger.error("Cannot start camera '{}': AI unavailable — {}", config.id, exc)
-            return
-
-        try:
-            zone_configs = await load_zones_for_camera(config.id)
-        except Exception as exc:
-            logger.warning("Failed to load zones for camera {}: {}", config.id, exc)
-            zone_configs = []
-
-        zt = ZoneTracker(
-            camera_id=config.id,
-            location_id=config.location_id,
-            tenant_id=config.tenant_id,
-            zones=zone_configs,
-        )
-        self._zone_trackers[config.id] = zt
-
-        reader = CameraReader(config, state)
-        processor = CameraProcessor(
-            reader=reader,
-            detection_svc=self._detection,  # type: ignore[arg-type]
-            tracking_svc=self._tracking_pool[config.id],
-            reid_svc=self._reid,  # type: ignore[arg-type]
-            heatmap_svc=self._heatmap,
-            bus=self._bus,
-            zone_tracker=zt,
-        )
-        task = asyncio.create_task(processor.run(), name=f"cam-{config.id}")
-        self._tasks[config.id] = task
-        task.add_done_callback(lambda t, cid=config.id: self._on_task_done(cid, t))
-        logger.info("📷 Camera '{}' reader started ({})", config.id, state.host_class or "unknown")
 
     async def reload_zones(self, camera_id: str) -> None:
         """Hot-reload zones for a running camera."""
@@ -157,12 +202,13 @@ class PipelineManager:
             logger.error("Failed to reload zones for {}: {}", camera_id, exc)
 
     def remove_camera(self, camera_id: str) -> bool:
+        self._bump_generation(camera_id)
         task = self._tasks.pop(camera_id, None)
         self._cameras.pop(camera_id, None)
         self._states.pop(camera_id, None)
         self._tracking_pool.pop(camera_id, None)
         self._zone_trackers.pop(camera_id, None)
-        if task:
+        if task and not task.done():
             task.cancel()
             asyncio.create_task(self._bus.publish(SentinelEvent(
                 type=EventType.CAMERA_OFFLINE,
@@ -215,9 +261,13 @@ class PipelineManager:
         return self._heatmap.get_snapshot(camera_id)
 
     def _on_task_done(self, camera_id: str, task: asyncio.Task[None]) -> None:
+        if self._tasks.get(camera_id) is not task:
+            return
         if task.cancelled():
             logger.debug("Camera task '{}' cancelled", camera_id)
-        elif exc := task.exception():
+            self._tasks.pop(camera_id, None)
+            return
+        if exc := task.exception():
             logger.error("❌ Camera task '{}' crashed: {}", camera_id, exc)
             self._tasks.pop(camera_id, None)
 
