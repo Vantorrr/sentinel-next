@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { camerasApi, hikconnectApi, type AddCameraBody, type HikCamera } from "@/lib/api";
+import { camerasApi, errorMessage, hikconnectApi, type AddCameraBody, type HikCamera } from "@/lib/api";
 
 type CameraPreset = "hikvision" | "dahua" | "custom";
 
@@ -24,6 +24,26 @@ const PRESETS: { id: CameraPreset; label: string; desc: string }[] = [
   { id: "dahua", label: "Dahua", desc: "gDMSS / SmartPSS" },
   { id: "custom", label: "Другая", desc: "Ручной ввод RTSP URL" },
 ];
+
+function streamView(cam: {
+  running: boolean;
+  stream_status?: string;
+  requirement?: string;
+}): { live: boolean; label: string; color: string; hint: string } {
+  const status = cam.stream_status ?? (cam.running ? "online" : "offline");
+  if (status === "online") return { live: true, label: "LIVE", color: "var(--green)", hint: "" };
+  if (status === "demo") return { live: true, label: "DEMO", color: "var(--green)", hint: "" };
+  if (status === "connecting") {
+    return { live: false, label: "Ждём кадр", color: "var(--yellow)", hint: "Онлайн появится после первого кадра." };
+  }
+  const hint = cam.requirement === "same_lan" || cam.requirement === "edge_same_lan"
+    ? "Сервер вне сети регистратора этот адрес не откроет. Нужен edge в салоне."
+    : cam.requirement === "rtsp_credentials"
+      ? "В URL нет пароля устройства."
+      : "Кадра нет. Проверьте маршрут до потока.";
+  if (status === "unreachable") return { live: false, label: "Нет маршрута", color: "var(--red)", hint };
+  return { live: false, label: "Нет кадра", color: "var(--red)", hint };
+}
 
 function buildRtspUrl(
   preset: CameraPreset,
@@ -56,16 +76,21 @@ export function CameraGrid({ compact = false }: { compact?: boolean }) {
 
   useEffect(() => {
     let cancelled = false;
-    camerasApi
-      .list()
-      .then((list) => {
-        if (!cancelled) setCameras(list);
-      })
-      .catch(() => {
-        /* store stays empty until WS/demo */
-      });
+    const load = () => {
+      camerasApi
+        .list()
+        .then((list) => {
+          if (!cancelled) setCameras(list);
+        })
+        .catch(() => {
+          /* store stays empty until WS/demo */
+        });
+    };
+    load();
+    const timer = setInterval(load, 15000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
   }, [setCameras]);
 
@@ -104,20 +129,21 @@ export function CameraGrid({ compact = false }: { compact?: boolean }) {
       <div className={`grid ${gridCols} gap-2 lg:gap-3`}>
         {cameras.map((cam) => {
           const tracks = activeTracks[cam.id]?.size ?? 0;
+          const view = streamView(cam);
           return (
             <div
               key={cam.id}
               className="relative rounded-xl overflow-hidden group glass-card"
               style={{
                 aspectRatio: compact ? "16/9" : "16/10",
-                borderColor: cam.running ? "rgba(0,229,255,0.2)" : undefined,
+                borderColor: view.live ? "rgba(0,229,255,0.2)" : undefined,
               }}
             >
               {/* Gradient background */}
               <div
                 className="absolute inset-0"
                 style={{
-                  background: cam.running
+                  background: view.live
                     ? "linear-gradient(135deg, rgba(0,229,255,0.03), rgba(124,58,237,0.03))"
                     : "var(--surface-2)",
                 }}
@@ -127,20 +153,20 @@ export function CameraGrid({ compact = false }: { compact?: boolean }) {
               <div className="absolute inset-0 flex items-center justify-center">
                 <Camera
                   size={compact ? 24 : 32}
-                  style={{ color: cam.running ? "var(--accent)" : "var(--text-dim)", opacity: 0.15 }}
+                  style={{ color: view.live ? "var(--accent)" : "var(--text-dim)", opacity: 0.15 }}
                 />
               </div>
 
               {/* Corner status */}
-              <div className="absolute top-2 left-2 flex items-center gap-1.5">
+              <div className="absolute top-2 left-2 flex items-center gap-1.5 max-w-[70%]">
                 <div
-                  className="w-2 h-2 rounded-full"
+                  className="w-2 h-2 rounded-full flex-shrink-0"
                   style={{
-                    background: cam.running ? "var(--green)" : "var(--red)",
-                    boxShadow: cam.running ? "0 0 6px var(--green)" : "none",
+                    background: view.color,
+                    boxShadow: view.live ? "0 0 6px var(--green)" : "none",
                   }}
                 />
-                <span className="text-[10px] font-mono" style={{ color: "var(--text)" }}>
+                <span className="text-[10px] font-mono truncate" style={{ color: "var(--text)" }}>
                   {cam.name || cam.id}
                 </span>
               </div>
@@ -155,15 +181,21 @@ export function CameraGrid({ compact = false }: { compact?: boolean }) {
                 </div>
               )}
 
-              {/* LIVE badge */}
-              {cam.running && (
-                <div
-                  className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold tracking-wider"
-                  style={{ background: "rgba(255,59,92,0.8)", color: "#fff" }}
+              {/* Status is a decoded frame, not a running task */}
+              <div
+                className="absolute bottom-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold tracking-wider max-w-[75%]"
+                style={{ background: view.live ? "rgba(255,59,92,0.8)" : "rgba(0,0,0,0.45)", color: "#fff" }}
+              >
+                {view.live && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+                <span className="truncate">{view.label}</span>
+              </div>
+              {!view.live && (cam.last_error || view.hint) && !compact && (
+                <p
+                  className="absolute bottom-8 left-2 right-8 text-[9px] leading-snug line-clamp-2"
+                  style={{ color: "var(--text-dim)" }}
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                  LIVE
-                </div>
+                  {cam.last_error || view.hint}
+                </p>
               )}
 
               {/* Remove button — visible on mobile, hover on desktop */}
@@ -273,10 +305,14 @@ function AddCameraModal({
         location_id: locationId,
         fps_inference: stream === "sub" ? 10 : 5,
       });
-      toast.success(`Камера «${cam.name}» подключена`);
+      if (cam.stream_status === "online" || cam.stream_status === "demo") {
+        toast.success(`Камера «${cam.name}»: кадр получен`);
+      } else {
+        toast(`Камера «${cam.name}» сохранена. Онлайн только после первого кадра.`);
+      }
       onAdded(cam);
-    } catch {
-      toast.error("Ошибка добавления камеры");
+    } catch (err: unknown) {
+      toast.error(errorMessage(err));
     } finally {
       setSubmitting(false);
     }
@@ -601,11 +637,14 @@ function HikConnectImport({ onImported }: { onImported: (cam: { id: string; name
         channel_no: cam.channel_no,
         name: cam.name,
       });
-      toast.success(`Камера «${result.name}» подключена через облако!`);
+      if (result.stream_status === "online" || result.stream_status === "demo") {
+        toast.success(`Камера «${result.name}»: кадр получен`);
+      } else {
+        toast(result.message || `Камера «${result.name}» сохранена. Ждём первый кадр.`);
+      }
       onImported(result);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Ошибка импорта";
-      toast.error(msg);
+      toast.error(errorMessage(err));
     } finally {
       setImporting(null);
     }
@@ -615,8 +654,9 @@ function HikConnectImport({ onImported }: { onImported: (cam: { id: string; name
     <div className="space-y-3">
       <div className="glass-card-sm p-3 rounded-xl">
         <p className="text-[11px] leading-relaxed" style={{ color: "var(--text-dim)" }}>
-          Камеры из вашего аккаунта <b>Hik-Connect</b> (тот же логин что в приложении на телефоне).
-          Подключение через облако — не нужен проброс портов.
+          Логин Hik-Connect показывает список устройств. Камера онлайн только после кадра на этом сервере.
+          Если облако не вернуло открываемый URL, частный адрес регистратора отсюда не подставляется:
+          нужен edge в той же сети, что регистратор, либо RTSP с маршрутом до сервера.
         </p>
       </div>
 

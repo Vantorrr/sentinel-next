@@ -26,6 +26,7 @@ import numpy as np
 from loguru import logger
 
 from sentinel.core.config import get_settings
+from sentinel.pipeline.stream_target import StreamState, redact_text
 
 cfg = get_settings()
 
@@ -67,12 +68,40 @@ class CameraReader:
     Never raises. On any failure, waits with exponential backoff and retries.
     """
 
-    def __init__(self, config: CameraConfig) -> None:
+    def __init__(self, config: CameraConfig, state: StreamState | None = None) -> None:
         self.config = config
+        self.state = state or StreamState(status="connecting")
         self.status = CameraStatus.CONNECTING
         self._frame_counter = 0
         self._drop_ratio = max(1, config.fps_capture // max(1, config.fps_inference))
         self._reconnect_delay = cfg.CAMERA_RECONNECT_BASE_DELAY
+
+    def _note_frame(self, *, demo: bool) -> None:
+        from datetime import datetime, timezone
+
+        self.state.frames_received += 1
+        self.state.last_frame_at = datetime.now(timezone.utc).isoformat()
+        self.state.last_error = ""
+        self.state.status = "demo" if demo else "online"
+        self.status = CameraStatus.DEMO if demo else CameraStatus.ONLINE
+        if self.state.frames_received == 1:
+            logger.success(
+                "📷 [CAM {}] first frame ({})",
+                self.config.id,
+                self.state.status,
+            )
+
+    def _note_offline(self, exc: Exception) -> None:
+        message = redact_text(str(exc))[:300]
+        self.state.status = "offline"
+        self.state.last_error = message
+        self.status = CameraStatus.OFFLINE
+        logger.warning(
+            "📷 [CAM {}] offline — {}. Retry in {:.0f}s",
+            self.config.id,
+            message,
+            self._reconnect_delay,
+        )
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -91,11 +120,7 @@ class CameraReader:
                     self._reconnect_delay = cfg.CAMERA_RECONNECT_BASE_DELAY
                     yield frame
             except Exception as exc:
-                self.status = CameraStatus.OFFLINE
-                logger.warning(
-                    "📷 [CAM {}] offline — {}. Retry in {:.0f}s",
-                    self.config.id, exc, self._reconnect_delay,
-                )
+                self._note_offline(exc)
                 await asyncio.sleep(self._reconnect_delay)
                 self._reconnect_delay = min(
                     self._reconnect_delay * 2,
@@ -136,9 +161,6 @@ class CameraReader:
         video_stream = container.streams.video[0]
         video_stream.thread_type = "AUTO"
 
-        self.status = CameraStatus.ONLINE
-        logger.success("📷 [CAM {}] online via PyAV — {}", self.config.id, url)
-
         loop = asyncio.get_event_loop()
         frame_idx = 0
 
@@ -153,6 +175,7 @@ class CameraReader:
                         None, lambda f=av_frame: f.to_ndarray(format="bgr24")
                     )
                     self._frame_counter += 1
+                    self._note_frame(demo=False)
                     yield CameraFrame(
                         camera_id=self.config.id,
                         location_id=self.config.location_id,
@@ -174,10 +197,7 @@ class CameraReader:
             cap = cv2.VideoCapture(src)  # type: ignore[call-arg]
 
         if not cap.isOpened():
-            raise RuntimeError(f"OpenCV cannot open: {url}")
-
-        self.status = CameraStatus.ONLINE
-        logger.success("📷 [CAM {}] online via OpenCV — {}", self.config.id, url)
+            raise RuntimeError(f"OpenCV cannot open: {redact_text(url)}")
 
         loop = asyncio.get_event_loop()
         frame_idx = 0
@@ -195,6 +215,7 @@ class CameraReader:
                     continue
 
                 self._frame_counter += 1
+                self._note_frame(demo=False)
                 yield CameraFrame(
                     camera_id=self.config.id,
                     location_id=self.config.location_id,
@@ -212,9 +233,6 @@ class CameraReader:
         Generates synthetic 640x480 BGR frames at fps_inference rate.
         Useful for local development without a real camera.
         """
-        self.status = CameraStatus.DEMO
-        logger.info("📷 [CAM {}] running in DEMO mode (synthetic frames)", self.config.id)
-
         interval = 1.0 / max(1, self.config.fps_inference)
         rng = np.random.default_rng(42)
 
@@ -227,6 +245,7 @@ class CameraReader:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 200), 1)
 
             self._frame_counter += 1
+            self._note_frame(demo=True)
             yield CameraFrame(
                 camera_id=self.config.id,
                 location_id=self.config.location_id,

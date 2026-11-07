@@ -21,6 +21,7 @@ class CameraStream:
         self.camera_id = camera_id
         self._cap: cv2.VideoCapture | None = None
         self._reconnect_delay = 2.0
+        self._frames = 0
 
     def _open(self) -> bool:
         try:
@@ -30,10 +31,11 @@ class CameraStream:
 
         self._cap = cv2.VideoCapture(src)
         if self._cap.isOpened():
-            logger.info("Camera {} opened: {}", self.camera_id, self._source)
+            # Do not log the URL: it contains the device password.
+            logger.info("Camera {} opened", self.camera_id)
             self._reconnect_delay = 2.0
             return True
-        logger.warning("Camera {} failed to open: {}", self.camera_id, self._source)
+        logger.warning("Camera {} failed to open", self.camera_id)
         return False
 
     async def frames(self) -> AsyncIterator[np.ndarray]:
@@ -58,6 +60,10 @@ class CameraStream:
                 self._cap = None
                 await asyncio.sleep(self._reconnect_delay)
                 continue
+
+            self._frames += 1
+            if self._frames == 1:
+                logger.info("Camera {} first frame received", self.camera_id)
 
             yield frame
 

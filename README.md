@@ -153,21 +153,24 @@ Railway runs `alembic upgrade head` on every deploy automatically (see `Dockerfi
 
 ## Connecting Hikvision Cameras
 
-### Вариант 0: Hik-Connect Cloud (рекомендуется)
+### Вариант 0: Hik-Connect Cloud (список устройств)
 
-Самый простой способ — через облако. Используйте тот же логин что в приложении Hik-Connect на телефоне.
+Логин тот же, что в приложении Hik-Connect. Он показывает регистраторы и каналы. Это не доказательство, что сервер уже читает видео.
 
-1. Добавьте в `.env`:
+Камера считается онлайн только после первого декодированного кадра. Если облако не вернуло URL, который открывается с этого сервера, импорт завершается ошибкой. Шаблон `<LOCAL_IP>` и частный адрес регистратора в базу не подставляются: с хоста вне салона до них нет маршрута, и код их не выдумывает.
+
+1. Добавьте в `.env` (регион `ru` для аккаунтов hik-connectru):
    ```
    HIKCONNECT_EMAIL=your@email.com
    HIKCONNECT_PASSWORD=your_password
-   HIKCONNECT_REGION=eu
+   HIKCONNECT_REGION=ru
    ```
 2. Или войдите через админ-панель → Настройка платформы → Hik-Connect (email + пароль)
-3. В дашборде → Камеры → **+ Добавить** → **Hik-Connect Cloud** → все камеры из аккаунта подтянутся автоматически
-4. Нажмите «Подключить» — система получит стрим из облака и начнёт AI-анализ
+3. Импорт камеры делает пользователь салона, не суперадмин
+4. Смотрите статус: «ждём кадр» / «нет маршрута». LIVE появляется только вместе с кадром
+5. Диагностика без секретов: `GET /api/v1/cameras/{id}/diagnostics`
 
-**Не нужен проброс портов, DDNS или доступ к локальной сети салона.**
+Официальный RTSP Hikvision: `rtsp://<user>:<password>@<host>:554/Streaming/Channels/101` (основной поток) и `102` (дополнительный). Канал 2 — `201`/`202`. Логин и пароль — от устройства, не от приложения. Телефонный P2P Hik-Connect этот URL не заменяет. ISAPI — локальный интерфейс устройства; облачный портал пользователя — [hik-connect.com](https://www.hik-connect.com/). Проброс RTSP снаружи описан у Hikvision: порт 554 (или свой RTSP-порт) должен быть маршрутизирован на регистратор.
 
 ### Вариант 1: Локальная сеть (Sentinel + камера в одной сети)
 
@@ -193,14 +196,18 @@ Railway runs `alembic upgrade head` on every deploy automatically (see `Dockerfi
 4. Отправляет только события (JSON) на сервер Sentinel
 5. Экономит трафик, работает при нестабильном интернете
 
+Агент читает только переменные `SENTINEL_*`. Имена `MASTER_URL`, `API_KEY` и `CAMERA_URLS` он не использует.
+
 ```bash
-# Запуск Edge Agent в салоне
+# Запуск Edge Agent в салоне (та же сеть, что регистратор)
 docker run -d --name sentinel-edge \
-  -e MASTER_URL=https://your-sentinel.railway.app \
-  -e API_KEY=<salon_api_key> \
-  -e CAMERA_URLS=rtsp://admin:pass@192.168.1.64:554/Streaming/Channels/101 \
+  -e SENTINEL_API_URL=https://your-sentinel.example \
+  -e SENTINEL_API_KEY=<salon_api_key> \
+  -e SENTINEL_CAMERAS=rtsp://USER:PASSWORD@192.168.1.64:554/Streaming/Channels/102 \
   sentinel-edge:latest
 ```
+
+Строка `Camera … opened` значит, что сокет открылся. Доказательство видео — следующая строка `first frame received`. Пароль в лог не пишется.
 
 ### RTSP URL format
 

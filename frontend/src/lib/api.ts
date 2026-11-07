@@ -349,6 +349,37 @@ export interface Camera {
   location_id: string;
   enabled: boolean;
   running: boolean;
+  stream_status?: string;
+  frames_received?: number;
+  last_error?: string;
+  host_class?: string;
+  requirement?: string;
+  message?: string;
+}
+
+export function errorMessage(err: unknown): string {
+  if (!(err instanceof Error)) return "Ошибка";
+  const text = err.message;
+  const jsonStart = text.indexOf("{");
+  if (jsonStart >= 0) {
+    try {
+      const body = JSON.parse(text.slice(jsonStart)) as { detail?: unknown };
+      const detail = body.detail;
+      if (typeof detail === "string") return detail;
+      if (detail && typeof detail === "object" && "message" in detail) {
+        const message = (detail as { message?: unknown }).message;
+        if (typeof message === "string" && message) return message;
+      }
+    } catch {
+      /* raw text */
+    }
+  }
+  return text;
+}
+
+export function cameraHasFrame(cam: { running: boolean; stream_status?: string }): boolean {
+  if (cam.stream_status) return cam.stream_status === "online" || cam.stream_status === "demo";
+  return cam.running;
 }
 
 export interface AddCameraBody {

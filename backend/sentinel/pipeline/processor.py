@@ -25,6 +25,7 @@ from sentinel.core.config import get_settings
 from sentinel.core.events import EventBus, EventType, SentinelEvent
 from sentinel.core.logging_setup import log_camera_event
 from sentinel.pipeline.camera import CameraFrame, CameraReader
+from sentinel.pipeline.stream_target import redact_text
 from sentinel.services.ai.detection import DetectionResult, DetectionService
 from sentinel.services.ai.face_reid import FaceReIDService, Identity
 from sentinel.services.ai.tracking import TrackingService
@@ -66,20 +67,42 @@ class CameraProcessor:
         self._active_tracks: dict[str, dict[str, Any]] = {}
         self._frame_count = 0
         self._t_start = time.monotonic()
+        self._announced_online = False
+
+    async def _announce_first_frame(self) -> None:
+        if self._announced_online:
+            return
+        if self.reader.state.frames_received < 1:
+            return
+        if self.reader.state.status not in {"online", "demo"}:
+            return
+        self._announced_online = True
+        await self.bus.publish(SentinelEvent(
+            type=EventType.CAMERA_ONLINE,
+            camera_id=self.camera_id,
+            location_id=self.location_id,
+            tenant_id=self.tenant_id,
+            payload={
+                "name": self.reader.config.name,
+                "frames_received": self.reader.state.frames_received,
+            },
+        ))
 
     async def run(self) -> None:
         log_camera_event("START", self.camera_id)
         async for frame in self.reader.stream():
             try:
+                await self._announce_first_frame()
                 await self._process_frame(frame)
             except Exception as exc:
-                logger.error("❌ [CAM {}] frame error: {}", self.camera_id, exc)
+                safe = redact_text(str(exc))[:300]
+                logger.error("❌ [CAM {}] frame error: {}", self.camera_id, safe)
                 await self.bus.publish(SentinelEvent(
                     type=EventType.PIPELINE_ERROR,
                     camera_id=self.camera_id,
                     location_id=self.location_id,
                     tenant_id=self.tenant_id,
-                    payload={"error": str(exc)},
+                    payload={"error": safe},
                 ))
 
     async def _process_frame(self, frame: CameraFrame) -> None:

@@ -41,6 +41,14 @@ docker run -d --name sentinel-edge \
 | `SENTINEL_YOLO_CONFIDENCE` | `0.35` | Detection confidence threshold |
 | `SENTINEL_HEARTBEAT_INTERVAL` | `30` | Heartbeat interval (seconds) |
 
+## Where it has to run
+
+The agent opens `SENTINEL_CAMERAS` from the machine it runs on. A private recorder address is reachable only on that LAN (same network as the NVR). A central server on a public host does not pull those URLs and must not invent a placeholder host.
+
+`Camera <id> opened` means OpenCV opened the source. It is not a frame. Wait for `Camera <id> first frame received`. The URL is not written to the log.
+
+The process reads `SENTINEL_API_URL`, `SENTINEL_API_KEY` and `SENTINEL_CAMERAS` only.
+
 ## How It Works
 
 1. Agent captures frames from local cameras via OpenCV

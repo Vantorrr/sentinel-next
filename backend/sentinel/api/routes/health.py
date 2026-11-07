@@ -82,11 +82,13 @@ async def _check_ai() -> dict[str, Any]:
 
 async def _check_cameras() -> dict[str, Any]:
     cams = get_manager().list_cameras()
-    running = sum(1 for c in cams if c["running"])
+    receiving = sum(1 for c in cams if c.get("running"))
+    total = len(cams)
     return {
-        "ok": True,
-        "total": len(cams),
-        "running": running,
+        "ok": total == 0 or receiving == total,
+        "total": total,
+        "running": receiving,
+        "receiving_frames": receiving,
     }
 
 

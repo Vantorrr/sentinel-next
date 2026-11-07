@@ -16,7 +16,9 @@ export function OverviewPanel() {
   const [rbScore, setRbScore] = useState<number | null>(null);
   const [rbTotal, setRbTotal] = useState(0);
 
-  const activeCams = cameras.filter((c) => c.running).length;
+  const activeCams = cameras.filter((c) =>
+    c.stream_status ? c.stream_status === "online" || c.stream_status === "demo" : c.running,
+  ).length;
 
   useEffect(() => {
     const start = new Date();

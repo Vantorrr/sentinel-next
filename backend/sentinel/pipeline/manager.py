@@ -15,6 +15,12 @@ from loguru import logger
 from sentinel.core.config import get_settings
 from sentinel.core.events import EventBus, EventType, SentinelEvent
 from sentinel.pipeline.camera import CameraConfig, CameraReader
+from sentinel.pipeline.stream_target import (
+    StreamState,
+    classify_stream_url,
+    diagnostic_message,
+    redact_stream_url,
+)
 from sentinel.pipeline.processor import CameraProcessor
 from sentinel.services.ai.detection import DetectionService
 from sentinel.services.ai.face_reid import FaceReIDService
@@ -35,6 +41,7 @@ class PipelineManager:
         self._zone_trackers: dict[str, ZoneTracker] = {}
         self._reid: FaceReIDService | None = None
         self._heatmap = HeatmapService()
+        self._states: dict[str, StreamState] = {}
 
     async def startup(self) -> None:
         # Lazy AI load: Railway/small VMs OOM if YOLO+InsightFace warm at boot.
@@ -75,19 +82,35 @@ class PipelineManager:
         if config.id in self._tasks and not self._tasks[config.id].done():
             logger.warning("Camera '{}' already running — skipping", config.id)
             return
-        if len(self._cameras) >= cfg.MAX_CAMERAS:
+        if config.id not in self._cameras and len(self._cameras) >= cfg.MAX_CAMERAS:
             raise RuntimeError(f"Max cameras reached ({cfg.MAX_CAMERAS})")
 
+        target = classify_stream_url(config.url)
+        state = StreamState(
+            host_class=target.host_class,
+            requirement=target.requirement,
+            scheme=target.scheme,
+        )
         self._cameras[config.id] = config
+        self._states[config.id] = state
+        if target.blocked:
+            # Legacy placeholder / passwordless rows stay stored and visible.
+            # Do not open them and do not rewrite the host.
+            state.status = "unreachable"
+            state.last_error = target.reason
+            logger.warning("📷 Camera '{}' not started: {}", config.id, target.host_class)
+            return
+
         self._tracking_pool[config.id] = TrackingService(max_age=cfg.TRACK_MAX_AGE)
+        asyncio.create_task(self._start_camera(config, state))
 
-        asyncio.create_task(self._start_camera(config))
-
-    async def _start_camera(self, config: CameraConfig) -> None:
+    async def _start_camera(self, config: CameraConfig, state: StreamState) -> None:
         """Load zones then start the processor task."""
         try:
             await self._ensure_models()
         except Exception as exc:
+            state.status = "offline"
+            state.last_error = "Модели ИИ не загрузились, поток не запущен"
             logger.error("Cannot start camera '{}': AI unavailable — {}", config.id, exc)
             return
 
@@ -105,7 +128,7 @@ class PipelineManager:
         )
         self._zone_trackers[config.id] = zt
 
-        reader = CameraReader(config)
+        reader = CameraReader(config, state)
         processor = CameraProcessor(
             reader=reader,
             detection_svc=self._detection,  # type: ignore[arg-type]
@@ -118,15 +141,7 @@ class PipelineManager:
         task = asyncio.create_task(processor.run(), name=f"cam-{config.id}")
         self._tasks[config.id] = task
         task.add_done_callback(lambda t, cid=config.id: self._on_task_done(cid, t))
-
-        await self._bus.publish(SentinelEvent(
-            type=EventType.CAMERA_ONLINE,
-            camera_id=config.id,
-            location_id=config.location_id,
-            tenant_id=config.tenant_id,
-            payload={"name": config.name, "url": config.url},
-        ))
-        logger.success("📷 Camera '{}' added — url={}", config.id, config.url)
+        logger.info("📷 Camera '{}' reader started ({})", config.id, state.host_class or "unknown")
 
     async def reload_zones(self, camera_id: str) -> None:
         """Hot-reload zones for a running camera."""
@@ -142,6 +157,7 @@ class PipelineManager:
     def remove_camera(self, camera_id: str) -> bool:
         task = self._tasks.pop(camera_id, None)
         self._cameras.pop(camera_id, None)
+        self._states.pop(camera_id, None)
         self._tracking_pool.pop(camera_id, None)
         self._zone_trackers.pop(camera_id, None)
         if task:
@@ -155,19 +171,43 @@ class PipelineManager:
             return True
         return False
 
+    def _public_row(self, cam: CameraConfig) -> dict[str, Any]:
+        state = self._states.get(cam.id) or StreamState(status="offline")
+        live = state.status in {"online", "demo"} and state.frames_received > 0
+        return {
+            "id": cam.id,
+            "name": cam.name,
+            "url": redact_stream_url(cam.url),
+            "location_id": cam.location_id,
+            "tenant_id": cam.tenant_id,
+            "enabled": cam.enabled,
+            "running": live,
+            "stream_status": state.status,
+            "frames_received": state.frames_received,
+            "last_frame_at": state.last_frame_at,
+            "last_error": state.last_error,
+            "host_class": state.host_class,
+            "requirement": state.requirement,
+        }
+
     def list_cameras(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": cam.id,
-                "name": cam.name,
-                "url": cam.url,
-                "location_id": cam.location_id,
-                "tenant_id": cam.tenant_id,
-                "enabled": cam.enabled,
-                "running": cam.id in self._tasks and not self._tasks[cam.id].done(),
-            }
-            for cam in self._cameras.values()
-        ]
+        return [self._public_row(cam) for cam in self._cameras.values()]
+
+    def diagnostics(self, camera_id: str) -> dict[str, Any] | None:
+        cam = self._cameras.get(camera_id)
+        if cam is None:
+            return None
+        state = self._states.get(camera_id) or StreamState(status="offline")
+        row = self._public_row(cam)
+        row["task_alive"] = camera_id in self._tasks and not self._tasks[camera_id].done()
+        row["lan_substituted"] = False
+        row["message"] = diagnostic_message(
+            cam.url,
+            status=state.status,
+            frames_received=state.frames_received,
+            last_error=state.last_error,
+        )
+        return row
 
     def get_heatmap(self, camera_id: str) -> dict[str, Any]:
         return self._heatmap.get_snapshot(camera_id)

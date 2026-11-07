@@ -147,7 +147,7 @@ class HikConnectClient:
         if area_domain:
             self._base_url = f"https://{area_domain}"
 
-        logger.info("Hik-Connect: logged in as {}", self._email)
+        logger.info("Hik-Connect: logged in")
 
     async def refresh_login(self) -> None:
         """Refresh session using rfSessionId (JWT valid ~30 min)."""
@@ -402,8 +402,7 @@ class HikConnectClient:
     ) -> HikStream:
         """Try cloud stream endpoints (HLS/RTMP/FLV/EZOPEN). Empty url = no cloud preview."""
         await self._ensure_session()
-        attempts: list[tuple[str, dict[str, Any]]] = []
-        last_raw: dict[str, Any] = {}
+        attempts: list[str] = []
 
         # protocol: 1=EZOPEN 2=HLS 3=RTMP 4=FLV (Hik/EZVIZ conventions vary by endpoint)
         for protocol, label in ((2, "hls"), (4, "flv"), (3, "rtmp"), (1, "ezopen")):
@@ -419,16 +418,21 @@ class HikConnectClient:
             except Exception as exc:
                 logger.warning("previewParam {} failed: {}", label, exc)
                 continue
-            last_raw = data
-            attempts.append((f"previewParam/{label}", data))
+            attempts.append(f"previewParam/{label}")
             url, expire = self._pick_url(data)
             meta_code = (data.get("meta") or {}).get("code")
             logger.info(
-                "Hik stream previewParam protocol={} meta={} url={}",
-                protocol, meta_code, (url[:80] + "...") if url and len(url) > 80 else url,
+                "Hik stream previewParam protocol={} meta={} has_url={}",
+                protocol, meta_code, bool(url),
             )
             if url:
-                return HikStream(serial=serial, url=url, expire_time=expire, protocol=label, raw=data)
+                return HikStream(
+                    serial=serial,
+                    url=url,
+                    expire_time=expire,
+                    protocol=label,
+                    raw={"protocol": label},
+                )
 
         # Alternate carrier endpoint (some RU accounts)
         for protocol, label in (("2", "hls"), ("4", "flv"), ("3", "rtmp")):
@@ -442,51 +446,51 @@ class HikConnectClient:
             except Exception as exc:
                 logger.warning("getVideoUrl {} failed: {}", label, exc)
                 continue
-            last_raw = data
-            attempts.append((f"getVideoUrl/{label}", data))
+            attempts.append(f"getVideoUrl/{label}")
             url, expire = self._pick_url(data)
             if url:
-                return HikStream(serial=serial, url=url, expire_time=expire, protocol=label, raw=data)
+                return HikStream(
+                    serial=serial,
+                    url=url,
+                    expire_time=expire,
+                    protocol=label,
+                    raw={"protocol": label},
+                )
 
         # Open-live (legacy)
         try:
             data = await self._api_get(
                 f"/v3/openlive/get?deviceSerial={serial}&channelNo={channel}&code=&quality={quality}"
             )
-            last_raw = data
-            attempts.append(("openlive", data))
+            attempts.append("openlive")
             url, expire = self._pick_url(data)
             if url:
-                return HikStream(serial=serial, url=url, expire_time=expire, protocol="openlive", raw=data)
+                return HikStream(
+                    serial=serial,
+                    url=url,
+                    expire_time=expire,
+                    protocol="openlive",
+                    raw={"protocol": "openlive"},
+                )
         except Exception as exc:
             logger.warning("openlive failed: {}", exc)
 
-        # LAN RTSP fallback from device CONNECTION info
+        # A private LAN address is not a stream this process can open.
+        # Do not invent rtsp://user@<LOCAL_IP> or a salon address.
         if serial not in self._device_cache:
             await self.get_devices()
         device = self._device_cache.get(serial)
-        local_ip = (device.local_ip if device else "") or ""
-        if local_ip:
-            rtsp = self.build_rtsp_url(local_ip, channel=channel, stream="sub")
-            logger.info("Hik stream: no cloud URL for {}, using LAN RTSP {}", serial, local_ip)
-            return HikStream(
-                serial=serial,
-                url=rtsp,
-                expire_time=0,
-                protocol="rtsp-lan",
-                raw={"attempts": attempts, "local_ip": local_ip, "last": last_raw},
-            )
-
+        lan_present = bool(device and device.local_ip)
         logger.warning(
-            "Hik stream: no URL for {} ch{} after {} attempts; last={}",
-            serial, channel, len(attempts), json.dumps(last_raw, ensure_ascii=False)[:400],
+            "Hik stream: no cloud URL for {} ch{} after {} attempts; lan_address_present={}",
+            serial, channel, len(attempts), lan_present,
         )
         return HikStream(
             serial=serial,
             url="",
             expire_time=0,
             protocol="",
-            raw={"attempts": attempts, "last": last_raw},
+            raw={"attempt_count": len(attempts), "lan_address_present": lan_present},
         )
 
     async def isapi(
@@ -555,9 +559,12 @@ class HikConnectClient:
         except Exception as exc:
             logger.warning("snapshot probe failed: {}", exc)
 
+        from sentinel.pipeline.stream_target import redact_stream_url
+
         return {
             "base_url": self._base_url,
-            "stream_url": stream.url,
+            "stream_url": redact_stream_url(stream.url),
+            "has_stream_url": bool(stream.url),
             "protocol": stream.protocol,
             "raw": stream.raw,
             "snapshot_ok": snapshot_ok,
@@ -565,8 +572,8 @@ class HikConnectClient:
             "device": {
                 "serial": serial,
                 "name": device.name if device else "",
-                "local_ip": device.local_ip if device else "",
-                "wan_ip": device.wan_ip if device else "",
+                "local_address_present": bool(device and device.local_ip),
+                "wan_address_present": bool(device and device.wan_ip),
                 "offline": device.offline if device else None,
             },
             "camera": {
@@ -574,8 +581,8 @@ class HikConnectClient:
                 "channel_no": channel,
                 "signal_status": cam.signal_status if cam else None,
                 "is_encrypt": cam.is_encrypt if cam else None,
-                "vtm_domain": cam.vtm_domain if cam else "",
-                "vtm_external_ip": cam.vtm_external_ip if cam else "",
+                "vtm_domain_present": bool(cam and cam.vtm_domain),
+                "vtm_address_present": bool(cam and cam.vtm_external_ip),
                 "vtm_port": cam.vtm_port if cam else 0,
             } if cam else None,
         }
@@ -586,10 +593,24 @@ class HikConnectClient:
         rtsp_port: str = "554",
         channel: int = 1,
         stream: str = "sub",
+        username: str = "",
+        password: str = "",
     ) -> str:
-        """Build RTSP URL for direct local network access (requires LAN)."""
+        """Official Hikvision RTSP. Refuses a placeholder host or a missing password.
+
+        Not a cloud fallback. A private address is only usable from the same LAN.
+        """
+        from urllib.parse import quote
+
+        host = (local_ip or "").strip()
+        if not host or "<" in host or "local_ip" in host.lower():
+            raise ValueError("RTSP host must be a real address, not a placeholder")
+        if not username or not password:
+            raise ValueError("Hikvision RTSP requires the device username and password")
         ch = f"{channel}02" if stream == "sub" else f"{channel}01"
-        return f"rtsp://admin@{local_ip}:{rtsp_port}/Streaming/Channels/{ch}"
+        user = quote(username, safe="")
+        secret = quote(password, safe="")
+        return f"rtsp://{user}:{secret}@{host}:{rtsp_port}/Streaming/Channels/{ch}"
 
     @staticmethod
     def _decode_jwt_expiration(jwt: str) -> datetime.datetime:
