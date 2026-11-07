@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { camerasApi, errorMessage, hikconnectApi, type AddCameraBody, type HikCamera } from "@/lib/api";
+import { camerasApi, errorMessage, hikconnectApi, redactDisplayText, type AddCameraBody, type HikCamera } from "@/lib/api";
 
 type CameraPreset = "hikvision" | "dahua" | "custom";
 
@@ -194,7 +194,7 @@ export function CameraGrid({ compact = false }: { compact?: boolean }) {
                   className="absolute bottom-8 left-2 right-8 text-[9px] leading-snug line-clamp-2"
                   style={{ color: "var(--text-dim)" }}
                 >
-                  {cam.last_error || view.hint}
+                  {redactDisplayText(cam.last_error || "") || view.hint}
                 </p>
               )}
 

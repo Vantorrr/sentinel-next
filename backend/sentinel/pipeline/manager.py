@@ -20,6 +20,7 @@ from sentinel.pipeline.stream_target import (
     classify_stream_url,
     diagnostic_message,
     redact_stream_url,
+    redact_text,
 )
 from sentinel.pipeline.processor import CameraProcessor
 from sentinel.services.ai.detection import DetectionService
@@ -78,7 +79,7 @@ class PipelineManager:
             await asyncio.gather(*self._tasks.values(), return_exceptions=True)
         self._tasks.clear()
 
-    def add_camera(self, config: CameraConfig) -> None:
+    def add_camera(self, config: CameraConfig, *, start: bool = True) -> None:
         if config.id in self._tasks and not self._tasks[config.id].done():
             logger.warning("Camera '{}' already running — skipping", config.id)
             return
@@ -93,12 +94,13 @@ class PipelineManager:
         )
         self._cameras[config.id] = config
         self._states[config.id] = state
-        if target.blocked:
+        if target.blocked or not start:
             # Legacy placeholder / passwordless rows stay stored and visible.
             # Do not open them and do not rewrite the host.
-            state.status = "unreachable"
-            state.last_error = target.reason
-            logger.warning("📷 Camera '{}' not started: {}", config.id, target.host_class)
+            if target.blocked:
+                state.status = "unreachable"
+                state.last_error = target.reason
+                logger.warning("📷 Camera '{}' not started: {}", config.id, target.host_class)
             return
 
         self._tracking_pool[config.id] = TrackingService(max_age=cfg.TRACK_MAX_AGE)
@@ -185,7 +187,7 @@ class PipelineManager:
             "stream_status": state.status,
             "frames_received": state.frames_received,
             "last_frame_at": state.last_frame_at,
-            "last_error": state.last_error,
+            "last_error": redact_text(state.last_error),
             "host_class": state.host_class,
             "requirement": state.requirement,
         }

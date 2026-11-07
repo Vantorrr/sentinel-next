@@ -357,6 +357,12 @@ export interface Camera {
   message?: string;
 }
 
+export function redactDisplayText(text: string): string {
+  return text
+    .replace(/((?:rtsp|rtsps|rtmp|https?):\/\/)[^\s/?#]+@/gi, "$1")
+    .replace(/((?:rtsp|rtsps|rtmp|https?):\/\/[^\s?#]*)\?[^\s#]*/gi, "$1");
+}
+
 export function errorMessage(err: unknown): string {
   if (!(err instanceof Error)) return "Ошибка";
   const text = err.message;

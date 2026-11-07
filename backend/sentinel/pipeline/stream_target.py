@@ -12,8 +12,9 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
 _USERINFO = re.compile(r"((?:rtsp|rtsps|rtmp|https?|ftp)://)(?:[^/\s@]+)@", re.IGNORECASE)
-_SENSITIVE_QUERY = re.compile(
-    r"([?&])(token|auth|password|pwd|signature|sessionid)=[^&\s]*",
+# Drop the whole query. Ticket names vary (token, t, accessToken, sign, …).
+_URL_QUERY = re.compile(
+    r"((?:rtsp|rtsps|rtmp|https?|ftp)://[^\s?#]*)\?[^\s#]*",
     re.IGNORECASE,
 )
 
@@ -76,9 +77,32 @@ _LAN_IMPORT_REASON = (
 
 
 def redact_text(text: str) -> str:
-    """Drop userinfo and common token query keys. Host and path stay."""
+    """Drop userinfo and every query string. Host and path stay."""
     cleaned = _USERINFO.sub(r"\1", text or "")
-    return _SENSITIVE_QUERY.sub(r"\1\2=***", cleaned)
+    return _URL_QUERY.sub(r"\1", cleaned)
+
+
+def caller_may_see_camera(
+    caller_tenant_id: str,
+    owner_tenant_id: str | None,
+    *,
+    is_superadmin: bool,
+) -> bool:
+    """Superadmin sees any loaded camera. A salon sees only its own owner id."""
+    if is_superadmin or caller_tenant_id == "__all__":
+        return True
+    if not owner_tenant_id:
+        return False
+    return caller_tenant_id == owner_tenant_id
+
+
+def hik_upsert_action(existing_owner: str | None, caller_tenant_id: str) -> str:
+    """insert, update, or forbidden. Runtime must start only after this write commits."""
+    if existing_owner is None:
+        return "insert"
+    if existing_owner != caller_tenant_id:
+        return "forbidden"
+    return "update"
 
 
 def redact_stream_url(url: str) -> str:
@@ -152,7 +176,10 @@ def classify_stream_url(url: str) -> StreamTarget:
 
     host = parts.hostname or ""
     host_class = _host_class(host)
-    has_credentials = bool(parts.password)
+    # Device RTSP uses user:password. Cloud RTMP/RTSP often uses a query ticket
+    # on a public host. A query on a private host is not that ticket.
+    query_ticket = bool(parts.query) and host_class in {"public", "hostname"}
+    has_credentials = bool(parts.password) or query_ticket
     if scheme in {"rtsp", "rtsps", "rtmp"} and not has_credentials:
         return StreamTarget(host_class, scheme, False, True, _PASSWORD_REASON, "rtsp_credentials")
     if host_class in {"private", "loopback", "link_local", "unspecified", "reserved"}:
@@ -218,7 +245,7 @@ def diagnostic_message(url: str, *, status: str, frames_received: int, last_erro
     if status == "connecting":
         return "Поток запускается. Онлайн появится после первого кадра."
     if last_error:
-        return last_error
+        return redact_text(last_error)
     if target.blocked:
         return target.reason
     return "Кадра нет."

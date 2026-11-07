@@ -11,7 +11,9 @@ from sentinel.pipeline.camera import CameraConfig, CameraReader
 from sentinel.pipeline.manager import PipelineManager
 from sentinel.pipeline.stream_target import (
     assess_hik_stream,
+    caller_may_see_camera,
     classify_stream_url,
+    hik_upsert_action,
     redact_stream_url,
     redact_text,
 )
@@ -133,3 +135,114 @@ async def test_empty_cloud_response_does_not_invent_placeholder():
     assert stream.protocol != "rtsp-lan"
     assert "<LOCAL_IP>" not in str(stream.raw)
     await client.close()
+
+
+def test_cloud_query_ticket_is_playable_and_not_a_device_password():
+    ticket = "ticket-value"
+    access = "access-value"
+    url = f"rtmp://cdn.example/live?t={ticket}&accessToken={access}"
+    target = classify_stream_url(url)
+    assert target.blocked is False
+    assert target.has_credentials is True
+    assert target.host_class == "hostname"
+    verdict = assess_hik_stream(url, "rtmp")
+    assert verdict.ok is True
+    assert ticket not in verdict.message
+    private = f"rtsp://10.1.2.3:554/Streaming/Channels/102?t={ticket}"
+    assert classify_stream_url(private).blocked is True
+    assert ticket not in classify_stream_url(private).reason
+
+
+def test_error_text_drops_query_tickets():
+    ticket = "ticket-value"
+    access = "access-value"
+    raw = f"OpenCV cannot open: rtmp://cdn.example/live?t={ticket}&accessToken={access}"
+    cleaned = redact_text(raw)
+    assert ticket not in cleaned
+    assert access not in cleaned
+    assert "?" not in cleaned
+    assert "cdn.example" in cleaned
+
+
+def test_last_error_on_the_public_row_is_redacted():
+    ticket = "ticket-value"
+    manager = PipelineManager()
+    url = "https://cdn.example/live.m3u8"
+    manager.add_camera(
+        CameraConfig(id="cloud", url=url, name="cloud", tenant_id="salon-a"),
+        start=False,
+    )
+    manager._states["cloud"].status = "offline"
+    manager._states["cloud"].last_error = f"fail rtmp://cdn.example/live?t={ticket}"
+    row = manager.list_cameras()[0]
+    diag = manager.diagnostics("cloud")
+    assert ticket not in row["last_error"]
+    assert diag is not None and ticket not in diag["message"] and ticket not in diag["last_error"]
+
+
+def test_other_tenant_cannot_see_runtime_only_camera():
+    assert caller_may_see_camera("salon-b", "salon-a", is_superadmin=False) is False
+    assert caller_may_see_camera("salon-a", "salon-a", is_superadmin=False) is True
+    assert caller_may_see_camera("salon-b", "salon-a", is_superadmin=True) is True
+    assert caller_may_see_camera("salon-b", None, is_superadmin=False) is False
+    assert hik_upsert_action("salon-a", "salon-b") == "forbidden"
+    assert hik_upsert_action("salon-a", "salon-a") == "update"
+    assert hik_upsert_action(None, "salon-a") == "insert"
+
+
+def test_failed_save_does_not_replace_placeholder_runtime():
+    manager = PipelineManager()
+    cam_id = "hik-DEV-ch1"
+    manager.add_camera(CameraConfig(
+        id=cam_id, url=_PLACEHOLDER, name="old", tenant_id="salon-a",
+    ))
+    ticket = "ticket-value"
+    new = CameraConfig(
+        id=cam_id,
+        url=f"https://cdn.example/live.m3u8?t={ticket}",
+        name="new",
+        tenant_id="salon-a",
+    )
+
+    def commit() -> None:
+        if hik_upsert_action("salon-a", "salon-a") != "update":
+            raise AssertionError("expected update")
+        raise RuntimeError("integrity")
+
+    started = False
+    try:
+        commit()
+        started = True
+        manager.remove_camera(cam_id)
+        manager.add_camera(new, start=False)
+    except RuntimeError as exc:
+        assert str(exc) == "integrity"
+    assert started is False
+    assert manager._cameras[cam_id].url == _PLACEHOLDER
+    diag = manager.diagnostics(cam_id)
+    assert diag is not None
+    assert ticket not in diag["url"]
+    assert diag["stream_status"] == "unreachable"
+
+
+def test_committed_reimport_replaces_placeholder_without_showing_ticket():
+    manager = PipelineManager()
+    cam_id = "hik-DEV-ch1"
+    manager.add_camera(CameraConfig(
+        id=cam_id, url=_PLACEHOLDER, name="old", tenant_id="salon-a",
+    ))
+    ticket = "ticket-value"
+    new = CameraConfig(
+        id=cam_id,
+        url=f"https://cdn.example/live.m3u8?t={ticket}",
+        name="new",
+        tenant_id="salon-a",
+    )
+    assert hik_upsert_action("salon-a", "salon-a") == "update"
+    manager.remove_camera(cam_id)
+    manager.add_camera(new, start=False)
+    assert manager._cameras[cam_id].url.startswith("https://")
+    row = next(c for c in manager.list_cameras() if c["id"] == cam_id)
+    assert row["stream_status"] == "connecting"
+    assert ticket not in row["url"]
+    assert "?" not in row["url"]

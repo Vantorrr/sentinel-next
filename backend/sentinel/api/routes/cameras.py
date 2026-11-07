@@ -16,6 +16,7 @@ from sentinel.db.models.camera import CameraRecord
 from sentinel.pipeline.camera import CameraConfig
 from sentinel.pipeline.manager import get_manager
 from sentinel.pipeline.stream_target import (
+    caller_may_see_camera,
     classify_stream_url,
     diagnostic_message,
     redact_stream_url,
@@ -251,11 +252,20 @@ async def camera_diagnostics(
 ) -> dict:
     """Safe stream status. Does not open the camera and does not rewrite the stored URL."""
     record = await db.get(CameraRecord, camera_id)
-    if record and tenant.tenant_id != "__all__" and record.tenant_id != tenant.tenant_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-
     runtime = get_manager().diagnostics(camera_id)
     if runtime is None and record is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found")
+
+    owner = record.tenant_id if record else (runtime or {}).get("tenant_id")
+    allowed = caller_may_see_camera(
+        tenant.tenant_id,
+        owner if isinstance(owner, str) else None,
+        is_superadmin=tenant.role == "superadmin" or tenant.tenant_id == "__all__",
+    )
+    if not allowed:
+        # A DB row confirms the id; a runtime-only id must not be confirmed.
+        if record:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera not found")
 
     if runtime is None and record is not None:
