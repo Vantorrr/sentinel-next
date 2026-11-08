@@ -8,6 +8,7 @@ from sentinel.db.base import Base
 import sentinel.db.models.person   # noqa: F401
 import sentinel.db.models.tenant   # noqa: F401
 import sentinel.db.models.camera   # noqa: F401
+import sentinel.db.models.edge_event
 import sentinel.db.models.zone     # noqa: F401
 from sentinel.db.url import resolve_database_url
 

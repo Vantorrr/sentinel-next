@@ -5,9 +5,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,23 +25,23 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 # ── Schemas ──────────────────────────────────────────────────────────────────
 
 class AgentEvent(BaseModel):
-    type: str
+    type: EventType
     camera_id: str = ""
     location_id: str = "default"
     track_id: str | None = None
     person_id: str | None = None
     confidence: float = 0.0
-    payload: dict = {}
-    timestamp_ms: int = 0
+    payload: dict = Field(default_factory=dict)
+    timestamp_ms: int = Field(default=0, ge=0)
 
 
 class EventBatchRequest(BaseModel):
-    agent_id: str
-    events: list[AgentEvent]
+    agent_id: str = Field(min_length=1, max_length=36)
+    events: list[AgentEvent] = Field(min_length=1, max_length=500)
 
 
 class HeartbeatRequest(BaseModel):
-    agent_id: str
+    agent_id: str = Field(min_length=1, max_length=36)
     agent_name: str = ""
     hostname: str = ""
     cameras_count: int = 0
@@ -69,27 +69,33 @@ def _require_real_tenant(tenant: TenantContext) -> None:
 async def ingest_events(
     req: EventBatchRequest,
     tenant: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Receive batch of events from edge agent. Publishes to EventBus."""
     _require_real_tenant(tenant)
-    bus = EventBus.get()
-    count = 0
-    for ev in req.events:
-        event = SentinelEvent(
-            type=ev.type,
-            camera_id=ev.camera_id,
-            location_id=ev.location_id,
-            tenant_id=tenant.tenant_id,
-            track_id=ev.track_id or "",
-            person_id=ev.person_id,
-            confidence=ev.confidence,
-            payload={**ev.payload, "agent_id": req.agent_id},
-            timestamp_ms=ev.timestamp_ms or int(datetime.now(timezone.utc).timestamp() * 1000),
-        )
-        await bus.publish(event)
-        count += 1
+    if tenant.role not in ("admin", "superadmin"):
+        raise HTTPException(403, "Agent write access required")
+    from sentinel.services.analytics.edge_inbox import store_batch
+    try:
+        ids = await store_batch(db, tenant.tenant_id, req.agent_id, req.events)
+    except ValueError as exc:
+        await db.rollback()
+        raise HTTPException(422, str(exc)) from None
+    return {"accepted":len(ids), "durable":True, "event_ids":ids, "tenant_id":tenant.tenant_id}
 
-    return {"accepted": count, "tenant_id": tenant.tenant_id}
+
+@router.get("/events")
+async def event_history(
+    limit: int = Query(100, ge=1, le=500),
+    tenant: TenantContext = Depends(get_current_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    _require_real_tenant(tenant)
+    from sentinel.db.models.edge_event import EdgeEventRecord
+    rows = (await db.scalars(select(EdgeEventRecord).where(
+        EdgeEventRecord.tenant_id == tenant.tenant_id).order_by(
+        EdgeEventRecord.received_at.desc(), EdgeEventRecord.id).limit(limit))).all()
+    import json
+    return {"events":[json.loads(row.event_json) for row in rows]}
 
 
 # ── Heartbeat ────────────────────────────────────────────────────────────────
@@ -103,11 +109,15 @@ async def agent_heartbeat(
 ) -> dict:
     """Register or update edge agent status."""
     _require_real_tenant(tenant)
+    if tenant.role not in ("admin", "superadmin"):
+        raise HTTPException(403, "Agent write access required")
     client_ip = request.client.host if request.client else ""
     now = datetime.now(timezone.utc)
 
     agent = await db.get(AgentRegistration, req.agent_id)
     if agent:
+        if agent.tenant_id != tenant.tenant_id:
+            raise HTTPException(403, "Agent belongs to another tenant")
         agent.hostname = req.hostname or agent.hostname
         agent.agent_name = req.agent_name or agent.agent_name
         agent.ip_address = client_ip
@@ -233,4 +243,5 @@ async def get_agent_config(
         "tenant_name": t.name if t else "",
         "max_cameras": t.max_cameras if t else 4,
         "plan": t.plan if t else "free",
+        "edge_protocol": "durable-v1",
     }

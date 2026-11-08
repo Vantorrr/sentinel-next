@@ -118,7 +118,9 @@ class EventBus:
             await self._pub.aclose()
         logger.info("📡 EventBus disconnected")
 
-    async def publish(self, event: SentinelEvent) -> None:
+    async def publish(self, event: SentinelEvent, reliable: bool = False) -> None:
+        if reliable and self._pub is None:
+            raise RuntimeError("Redis publisher unavailable")
         self._locally_published.add(event.id)
         if len(self._locally_published) > 2000:
             # Bound memory — drop oldest half
@@ -137,6 +139,8 @@ class EventBus:
             except Exception as exc:
                 logger.warning("EventBus.publish Redis error: {}", exc)
                 self._locally_published.discard(event.id)
+                if reliable:
+                    raise
 
     def subscribe(self) -> asyncio.Queue[SentinelEvent]:
         q: asyncio.Queue[SentinelEvent] = asyncio.Queue(maxsize=512)
