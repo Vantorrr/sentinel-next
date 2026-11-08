@@ -1,0 +1,38 @@
+name: Durable edge backend
+on:
+  push:
+    branches: ['codex/durable-edge-backend', 'main']
+  pull_request:
+    paths: ['backend/**', '.github/workflows/edge-contract.yml']
+permissions:
+  contents: read
+jobs:
+  postgres-contract:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: edge_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U sentinel -d edge_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://sentinel:test-only@localhost:5432/edge_test
+      EDGE_TEST_DATABASE_URL: postgresql+asyncpg://sentinel:test-only@localhost:5432/edge_test
+      SECRET_KEY: test-only-durable-contract-key-32-characters
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install fastapi sqlalchemy asyncpg alembic pydantic-settings python-jose bcrypt redis loguru httpx pytest pytest-asyncio email-validator
+      - run: python -m alembic upgrade head
+      - run: python -m pytest tests/test_edge_ingestion.py -q

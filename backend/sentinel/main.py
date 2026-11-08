@@ -241,6 +241,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     db_writer = DBWriter()
     db_writer_task = asyncio.create_task(db_writer.run(), name="db-writer")
 
+    from sentinel.services.analytics.edge_inbox import run_outbox
+    edge_outbox_task = asyncio.create_task(run_outbox(), name="edge-outbox")
+
     summarizer = SceneSummarizer()
     summarizer_task = asyncio.create_task(summarizer.run(), name="llm-summarizer")
 
@@ -295,7 +298,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("🛑 Sentinel-Next shutting down…")
     db_writer_task.cancel()
     summarizer_task.cancel()
-    tasks_to_cancel = [db_writer_task, summarizer_task]
+    edge_outbox_task.cancel()
+    tasks_to_cancel = [db_writer_task, summarizer_task, edge_outbox_task]
     if tg_task:
         tg_task.cancel()
         tasks_to_cancel.append(tg_task)
