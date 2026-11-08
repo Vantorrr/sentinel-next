@@ -67,6 +67,25 @@ def _age(stamp: float | None, now: float) -> float | None:
     return round(now - stamp, 3)
 
 
+def format_foreground_line(snapshot: dict[str, Any]) -> str:
+    """Operator line. Decoded frames and HTTP status only; opened is omitted."""
+    parts = [
+        f"state={snapshot.get('state')}",
+        f"event_http={snapshot.get('last_event_status')}",
+        f"heartbeat_http={snapshot.get('last_heartbeat_status')}",
+    ]
+    for cam in snapshot.get("cameras") or []:
+        parts.append(
+            "camera={id} decoded_frames={frames} last_frame_age_s={age} has_decoded_frame={flag}".format(
+                id=cam.get("camera_id"),
+                frames=cam.get("frames"),
+                age=cam.get("last_frame_age_s"),
+                flag=cam.get("has_decoded_frame"),
+            )
+        )
+    return " ".join(parts)
+
+
 def write_status(path: Path, health: RuntimeHealth) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(health.snapshot(), ensure_ascii=False, indent=2)

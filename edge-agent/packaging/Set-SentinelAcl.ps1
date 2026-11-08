@@ -81,6 +81,9 @@ function Set-Dacl($Item) {
 }
 
 function Walk($Item) {
+    if (($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Refusing reparse point: $($Item.FullName)"
+    }
     Set-Dacl $Item
     $isDir = [bool]($Item.Attributes -band [IO.FileAttributes]::Directory)
     if (-not $isDir) { return }

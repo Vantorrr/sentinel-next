@@ -86,6 +86,7 @@ def test_paths_with_spaces_and_cyrillic(tmp_path: Path):
     assert "Вай Тай салон" in xml
     assert secret not in xml
     assert "<Hidden>false</Hidden>" in xml
+    assert "-I -P -m sentinel_edge.cli" in xml
     command, arguments = task_command(folder / "python.exe", config)
     assert " " in str(config)
     assert secret not in arguments
@@ -337,6 +338,29 @@ def test_cwd_dotenv_is_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     assert settings.camera_list() == ["file"]
 
 
+def test_foreground_line_reports_frames_and_ack_without_secrets():
+    from sentinel_edge.health import format_foreground_line
+    line = format_foreground_line({
+        "state": "running",
+        "last_event_status": 200,
+        "last_heartbeat_status": 200,
+        "cameras": [{
+            "camera_id": "edge-salon-cam-0",
+            "frames": 4,
+            "last_frame_age_s": 0.5,
+            "has_decoded_frame": True,
+            "opened": True,
+            "label": "rtsp://USER:SECRET@192.168.0.10/Streaming/Channels/102",
+        }],
+    })
+    assert "decoded_frames=4" in line
+    assert "last_frame_age_s=0.5" in line
+    assert "event_http=200" in line
+    assert "heartbeat_http=200" in line
+    assert "SECRET" not in line
+    assert "opened" not in line
+
+
 def test_frame_interval_follows_configured_fps():
     from sentinel_edge.camera import capture_interval
     assert capture_interval(2) == 0.5
@@ -351,12 +375,19 @@ def test_bat_scripts_split_status_stop_and_python():
     install = (packaging / "Install.bat").read_text(encoding="utf-8")
     status = (packaging / "Status.bat").read_text(encoding="utf-8")
     stop = (packaging / "Stop.bat").read_text(encoding="utf-8")
-    assert "InstallAllUsers=1" in install
     assert "Assert-TrustedRoot.ps1" in install
     assert 'for %%I in ("%HERE%.") do set "ROOT=%%~fI"' in install
     assert "InstallAllUsers=0" not in install
+    assert "Invoke-WebRequest" not in install
+    assert "python.org" not in install
     assert "LocalAppData" not in install
     assert r"%ProgramFiles%\Python312\python.exe" in install
+    foreground = (packaging / "Run-Foreground.bat").read_text(encoding="utf-8")
+    assert "schtasks" not in foreground.lower()
+    assert "RunAs" not in foreground
+    assert "icacls" not in foreground.lower()
+    assert ".venv" in foreground
+    assert "-P -m sentinel_edge.cli run --config" in foreground
     assert "status.json" in status
     assert "config.env" not in status
     assert r"control\stop.request" in stop
@@ -534,6 +565,21 @@ def test_untrusted_config_and_model_are_left_unused(tmp_path: Path):
     assert calls == []
 
 
+def test_planted_import_shadows_are_removed_and_task_is_isolated(tmp_path: Path):
+    root, data, _calls, runner = _install_root(tmp_path)
+    app = data / "app"
+    app.mkdir(parents=True)
+    (app / "sitecustomize.py").write_text("raise SystemExit('planted')\n", encoding="utf-8")
+    (app / "sentinel_edge").mkdir()
+    (app / "sentinel_edge" / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+    apply_install(root, data, runner, Path(r"C:\Program Files\Python312\python.exe"))
+    assert not (app / "sitecustomize.py").exists()
+    assert not (app / "sentinel_edge").exists()
+    xml = (data / "SentinelEdge.xml").read_text(encoding="utf-16")
+    assert "-I -P -m sentinel_edge.cli" in xml
+    assert str(data / "app" / ".venv") in xml
+
+
 def test_planted_venv_is_removed_before_any_command(tmp_path: Path):
     root, data, calls, runner = _install_root(tmp_path)
     planted = data / "app" / ".venv" / "Scripts" / "python.exe"
@@ -610,12 +656,64 @@ def test_trusted_root_rejects_users_write(tmp_path: Path):
         capture_output=True,
         text=True,
     )
+    subprocess.run(
+        ["icacls", str(opened), "/remove", "*S-1-3-4"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     allowed = subprocess.run(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Root", str(opened)],
         capture_output=True,
         text=True,
     )
     assert allowed.returncode == 0, allowed.stdout + allowed.stderr
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions and icacls")
+def test_acl_walk_does_not_follow_a_junction(tmp_path: Path):
+    import subprocess
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+    subprocess.run(["icacls", str(marker), "/grant", "*S-1-5-32-546:R"], check=True, capture_output=True, text=True)
+    before = subprocess.run(["icacls", str(marker)], check=True, capture_output=True, text=True).stdout
+    control = tmp_path / "SentinelEdge" / "control"
+    control.mkdir(parents=True)
+    link = control / "escape"
+    created = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(outside)], capture_output=True, text=True)
+    if created.returncode != 0:
+        pytest.skip(created.stdout + created.stderr)
+    script = Path(__file__).resolve().parents[1] / "packaging" / "Set-SentinelAcl.ps1"
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Path", str(control), "-Preset", "control"],
+        capture_output=True,
+        text=True,
+    )
+    after = subprocess.run(["icacls", str(marker)], check=True, capture_output=True, text=True).stdout
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert before == after
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="icacls exists on the Windows runner")
+def test_trust_gate_rejects_a_writable_requirements_file(tmp_path: Path):
+    import subprocess
+    script = Path(__file__).resolve().parents[1] / "packaging" / "Assert-TrustedRoot.ps1"
+    root = tmp_path / "pkg"
+    root.mkdir()
+    subprocess.run(["icacls", str(root), "/inheritance:d"], check=True, capture_output=True, text=True)
+    subprocess.run(["icacls", str(root), "/remove", "*S-1-5-32-545"], check=True, capture_output=True, text=True)
+    subprocess.run(["icacls", str(root), "/remove", "*S-1-3-4"], check=True, capture_output=True, text=True)
+    planted = root / "requirements-windows.txt"
+    planted.write_text("x\n", encoding="utf-8")
+    subprocess.run(["icacls", str(planted), "/grant", "*S-1-5-32-546:M"], check=True, capture_output=True, text=True)
+    failed = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Root", str(root)],
+        capture_output=True,
+        text=True,
+    )
+    assert failed.returncode == 3, failed.stdout + failed.stderr
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="icacls exists on the Windows runner")

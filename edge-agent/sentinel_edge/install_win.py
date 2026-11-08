@@ -72,7 +72,8 @@ def quote_arg(value: str) -> str:
 
 
 def task_command(python_exe: Path, config_path: Path) -> tuple[str, str]:
-    arguments = "-m sentinel_edge.cli run --config " + quote_arg(str(config_path))
+    # -I skips sitecustomize. -P keeps the working directory off sys.path.
+    arguments = "-I -P -m sentinel_edge.cli run --config " + quote_arg(str(config_path))
     return str(python_exe), arguments
 
 
@@ -306,6 +307,27 @@ def ensure_real_dir(path: Path) -> None:
     reject_reparse(path)
 
 
+def discard_planted_imports(app: Path) -> None:
+    """Remove import shadows. These names are code, not salon config.
+
+    A junction is refused instead of deleted: removing it can follow the link.
+    """
+    import shutil
+    for name in ("sitecustomize.py", "usercustomize.py", "sentinel_edge"):
+        path = app / name
+        reject_reparse(path)
+        if not path.exists():
+            continue
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    for path in app.glob("*.pth"):
+        reject_reparse(path)
+        if path.is_file():
+            path.unlink()
+
+
 def apply_install(
     root: Path,
     data: Path,
@@ -342,6 +364,7 @@ def apply_install(
     if venv_dir.exists() and not check(venv_dir):
         import shutil
         shutil.rmtree(venv_dir)
+    discard_planted_imports(app)
     for command in acl_commands(data):
         runner(command)
 
@@ -387,7 +410,7 @@ def apply_install(
         ])
         done.append("model")
     xml_path = data / "SentinelEdge.xml"
-    xml_path.write_text(render_task_xml(venv_python, dest, app), encoding="utf-16")
+    xml_path.write_text(render_task_xml(venv_python, dest, venv_dir), encoding="utf-16")
     runner(schtasks_create_argv(xml_path))
     for command in acl_commands(data):
         runner(command)
@@ -414,7 +437,17 @@ def main(argv: list[str] | None = None) -> int:
         subprocess.run(command, check=True)
 
     if args.command == "install":
-        apply_install(resolve_package_root(root), data, runner, base_python)
+        package = resolve_package_root(root)
+        gate = package / "Assert-TrustedRoot.ps1"
+        if not gate.is_file():
+            gate = package / "packaging" / "Assert-TrustedRoot.ps1"
+        checked = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(gate), "-Root", str(package)],
+            check=False,
+        )
+        if checked.returncode != 0:
+            return checked.returncode or 1
+        apply_install(package, data, runner, base_python)
         runner(schtasks_run_argv())
         return 0
     if args.command == "status":

@@ -13,7 +13,7 @@ from pathlib import Path
 from loguru import logger
 
 from sentinel_edge.config import load_settings
-from sentinel_edge.health import RuntimeHealth, write_status
+from sentinel_edge.health import RuntimeHealth, format_foreground_line, write_status
 from sentinel_edge.pidlock import acquire_pid_lock, release_pid_lock
 from sentinel_edge.redact import camera_label, redact_text
 from sentinel_edge.signals import install_stop_handlers
@@ -117,6 +117,7 @@ async def _run_async(config_path: Path | None, stop_flag: dict[str, bool]) -> No
                 request_stop()
                 return
             write_status(status_path, health)
+            print(format_foreground_line(health.snapshot()), flush=True)
             await asyncio.sleep(2)
 
     async def process_camera(source: str, idx: int) -> None:
