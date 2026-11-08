@@ -711,12 +711,14 @@ def test_trust_gate_rejects_a_writable_requirements_file(tmp_path: Path):
     planted.write_text("x\n", encoding="utf-8")
     subprocess.run(["icacls", str(planted), "/setowner", "*S-1-5-32-544"], check=True, capture_output=True, text=True)
     subprocess.run(["icacls", str(planted), "/grant", "*S-1-5-32-546:M"], check=True, capture_output=True, text=True)
+    listed = subprocess.run(["icacls", str(planted)], capture_output=True, text=True)
     failed = subprocess.run(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Root", str(root)],
         capture_output=True,
         text=True,
     )
-    assert failed.returncode == 3, failed.stdout + failed.stderr
+    assert "Guests" in listed.stdout, listed.stdout + listed.stderr
+    assert failed.returncode == 3, listed.stdout + failed.stdout + failed.stderr
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="icacls exists on the Windows runner")

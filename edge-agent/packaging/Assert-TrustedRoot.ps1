@@ -12,7 +12,8 @@ function Get-AclOf($entry) {
     if ($PSVersionTable.PSVersion.Major -ge 6) {
         return [System.IO.FileSystemAclExtensions]::GetAccessControl($entry)
     }
-    return $entry.GetAccessControl()
+    $sections = [System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner
+    return $entry.GetAccessControl($sections)
 }
 
 function Convert-ToSid($identity) {
@@ -45,8 +46,11 @@ function Test-Node($entry) {
         if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
         $sid = Convert-ToSid $ace.IdentityReference
         if ($allowed -contains $sid) { continue }
-        if (([int]$ace.FileSystemRights -band $writeBits) -ne 0) {
-            [Console]::Error.WriteLine("A principal other than Administrators can write: $($entry.FullName)")
+        $rightName = [string]$ace.FileSystemRights
+        $rights = [int64]$ace.FileSystemRights
+        $writes = ($rights -band [int64]$writeBits) -ne 0
+        if ($writes -or $rightName -match "Modify|FullControl|Write|Delete|Append") {
+            [Console]::Error.WriteLine("A principal other than Administrators can write: $($entry.FullName) $sid $rightName")
             exit 3
         }
     }
