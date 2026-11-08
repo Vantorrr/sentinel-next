@@ -9,14 +9,11 @@ if (-not $item.Exists) {
 }
 
 function Get-AclOf($entry) {
-    if ($PSVersionTable.PSVersion.Major -ge 6) {
-        return [System.IO.FileSystemAclExtensions]::GetAccessControl($entry)
-    }
+    $sections = [System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner
     if ($entry.PSIsContainer) {
-        $sections = [System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner
-        return $entry.GetAccessControl($sections)
+        return New-Object System.Security.AccessControl.DirectorySecurity($entry.FullName, $sections)
     }
-    return $entry.GetAccessControl()
+    return New-Object System.Security.AccessControl.FileSecurity($entry.FullName, $sections)
 }
 
 function Convert-ToSid($identity) {
