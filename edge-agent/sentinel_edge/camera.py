@@ -10,18 +10,28 @@ import cv2
 import numpy as np
 from loguru import logger
 
-from sentinel_edge.config import cfg
-
 
 class CameraStream:
     """Async camera reader with reconnection and frame-rate control."""
 
-    def __init__(self, source: str, camera_id: str = "cam-0") -> None:
+    def __init__(
+        self,
+        source: str,
+        camera_id: str = "cam-0",
+        *,
+        reconnect_delay: float = 2.0,
+    ) -> None:
         self._source = source
         self.camera_id = camera_id
         self._cap: cv2.VideoCapture | None = None
-        self._reconnect_delay = 2.0
+        self._reconnect_delay = reconnect_delay
+        self._reconnect_floor = reconnect_delay
         self._frames = 0
+        self.opened = False
+        self.last_open_wall: float | None = None
+        self.last_frame_wall: float | None = None
+        self.last_error = ""
+        self._frame_interval = 0.2
 
     def _open(self) -> bool:
         try:
@@ -31,16 +41,21 @@ class CameraStream:
 
         self._cap = cv2.VideoCapture(src)
         if self._cap.isOpened():
-            # Do not log the URL: it contains the device password.
+            # Opened is not a decoded frame. The URL is not logged.
+            self.opened = True
+            self.last_open_wall = time.time()
+            self.last_error = ""
             logger.info("Camera {} opened", self.camera_id)
-            self._reconnect_delay = 2.0
+            self._reconnect_delay = self._reconnect_floor
             return True
+        self.opened = False
+        self.last_error = "open failed"
         logger.warning("Camera {} failed to open", self.camera_id)
         return False
 
     async def frames(self) -> AsyncIterator[np.ndarray]:
         """Yield frames at configured FPS."""
-        frame_interval = 1.0 / cfg.FPS_INFERENCE
+        frame_interval = self._frame_interval
         loop = asyncio.get_event_loop()
 
         while True:
@@ -55,6 +70,7 @@ class CameraStream:
             ret, frame = await loop.run_in_executor(None, self._cap.read)
 
             if not ret or frame is None:
+                self.last_error = "read failed"
                 logger.warning("Camera {} lost frame, reconnecting...", self.camera_id)
                 self._cap.release()
                 self._cap = None
@@ -62,6 +78,8 @@ class CameraStream:
                 continue
 
             self._frames += 1
+            self.last_frame_wall = time.time()
+            self.last_error = ""
             if self._frames == 1:
                 logger.info("Camera {} first frame received", self.camera_id)
 

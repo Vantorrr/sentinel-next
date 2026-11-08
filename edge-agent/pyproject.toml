@@ -1,22 +1,23 @@
 [project]
 name = "sentinel-edge"
-version = "0.1.0"
-description = "Sentinel-Next Edge Agent — local video processing + API sync"
+version = "0.2.0"
+description = "Sentinel Edge — local camera processing and JSON sync"
 requires-python = ">=3.10"
 dependencies = [
-    "opencv-python-headless>=4.9",
-    "ultralytics>=8.3",
-    "supervision>=0.25",
-    "numpy>=1.26",
-    "httpx>=0.28",
-    "python-dotenv>=1.0",
-    "loguru>=0.7",
-    "typer>=0.14",
-    "psutil>=6.0",
+    "opencv-python-headless==4.10.0.84",
+    "ultralytics==8.3.49",
+    "supervision==0.25.1",
+    "numpy==1.26.4",
+    "httpx==0.28.1",
+    "loguru==0.7.3",
+    "psutil==6.1.1",
 ]
 
 [project.scripts]
-sentinel-edge = "sentinel_edge.cli:app"
+sentinel-edge = "sentinel_edge.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sentinel_edge*"]
 
 [build-system]
 requires = ["setuptools>=75"]

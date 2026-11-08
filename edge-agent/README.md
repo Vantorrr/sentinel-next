@@ -1,5 +1,7 @@
 # Sentinel Edge Agent
 
+Windows salon package: `packaging/README_RU.txt`. Version 0.2.0 registers a visible boot task and does not reinstall dependencies on every start. The agent sends JSON events only. It does not recognize faces and it does not upload video.
+
 Local video processing agent for Sentinel-Next. Runs in each salon, captures RTSP camera streams, runs YOLOv11 detection + ByteTrack, and sends events to the central server.
 
 ## Quick Start
