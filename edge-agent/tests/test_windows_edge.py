@@ -156,11 +156,22 @@ def test_install_is_idempotent_and_keeps_config(tmp_path: Path):
     assert str(data / "private" / "config.env") in xml
     assert str(root) not in xml
     assert "SECRET" not in xml
-    private_acl = [item for item in calls if item[:2] == ["icacls", str(data / "private")]]
-    control_acl = [item for item in calls if item[:2] == ["icacls", str(data / "control")]]
-    assert private_acl and "/T" in private_acl[0]
-    assert all("Users" not in part for item in private_acl for part in item)
-    assert control_acl and any("Users" in part for part in control_acl[0])
+    def grants(folder: Path) -> list[str]:
+        found = []
+        for item in calls:
+            if item[:2] != ["icacls", str(folder)]:
+                continue
+            for idx, part in enumerate(item[:-1]):
+                if part == "/grant:r":
+                    found.append(item[idx + 1])
+        return found
+
+    private_calls = [item for item in calls if item[:2] == ["icacls", str(data / "private")]]
+    assert private_calls and any("/T" in item for item in private_calls)
+    assert any("/remove:g" in item and "*S-1-5-32-545" in item for item in private_calls)
+    assert all("S-1-5-32-545" not in ace for ace in grants(data / "private"))
+    assert all("S-1-5-32-545" not in ace for ace in grants(data / "app"))
+    assert any("S-1-5-32-545" in ace for ace in grants(data / "control"))
     from sentinel_edge.install_win import stamp_material
     stamp = data / "install-stamp.txt"
     venv_python = data / "app" / ".venv" / "Scripts" / "python.exe"
@@ -484,8 +495,9 @@ def test_real_icacls_removes_users_from_private(tmp_path: Path):
         (data / name).mkdir(parents=True)
     secret = data / "private" / "config.env"
     secret.write_text("SENTINEL_API_KEY=secret\n", encoding="utf-8")
-    for command in acl_commands(data):
-        subprocess.run(command, check=True, capture_output=True, text=True)
+    for _ in range(2):
+        for command in acl_commands(data):
+            subprocess.run(command, check=True, capture_output=True, text=True)
     def aces(target: Path) -> str:
         listing = subprocess.run(["icacls", str(target)], check=True, capture_output=True, text=True)
         return listing.stdout.replace(str(target), "")

@@ -128,30 +128,49 @@ def schtasks_delete_argv() -> list[str]:
     return ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"]
 
 
-def _icacls(folder: Path, *aces: str) -> list[str]:
-    command = ["icacls", str(folder), "/inheritance:r", "/T"]
+def _grant(folder: Path, *aces: str, traverse: bool) -> list[str]:
+    command = ["icacls", str(folder)]
+    if traverse:
+        command.append("/T")
     for ace in aces:
         command.extend(["/grant:r", ace])
     return command
 
 
-def acl_commands(data: Path) -> list[list[str]]:
-    """Lock code and secrets. Operators can read status and write only stop.request."""
-    system = r"NT AUTHORITY\SYSTEM:(OI)(CI)F"
-    admins = r"BUILTIN\Administrators:(OI)(CI)F"
-    service = r"NT AUTHORITY\LOCAL SERVICE:(OI)(CI)M"
-    service_rx = r"NT AUTHORITY\LOCAL SERVICE:(OI)(CI)RX"
-    users_rx = r"BUILTIN\Users:(OI)(CI)RX"
-    users_m = r"BUILTIN\Users:(OI)(CI)M"
-    users_r = r"BUILTIN\Users:(OI)(CI)R"
+def _lock(folder: Path, *aces: str) -> list[list[str]]:
+    """Break inheritance, drop Users, then write only the ACEs we pass in.
+
+    One icacls invocation that mixes /inheritance:r with /grant:r keeps an
+    explicit Users entry written earlier. These are separate invocations.
+    """
     return [
-        _icacls(data, system, admins, service, users_rx),
-        _icacls(data / "private", system, admins, service),
-        _icacls(data / "app", system, admins, service_rx),
-        _icacls(data / "models", system, admins, service_rx),
-        _icacls(data / "control", system, admins, service, users_m),
-        _icacls(data / "logs", system, admins, service, users_r),
+        ["icacls", str(folder), "/inheritance:d", "/T"],
+        ["icacls", str(folder), "/remove:g", "*S-1-5-32-545", "/T"],
+        _grant(folder, *aces, traverse=True),
     ]
+
+
+def acl_commands(data: Path) -> list[list[str]]:
+    """Lock code and secrets. Operators can read status and write only stop.request.
+
+    SIDs stay numeric so a non-English Windows install targets the same accounts.
+    The data folder keeps inheritance so a new status.json is readable. Its grant
+    does not use /T: that would write an explicit Users ACE into private and app.
+    """
+    system = "*S-1-5-18:(OI)(CI)F"
+    admins = "*S-1-5-32-544:(OI)(CI)F"
+    service = "*S-1-5-19:(OI)(CI)M"
+    service_rx = "*S-1-5-19:(OI)(CI)RX"
+    users_rx = "*S-1-5-32-545:(OI)(CI)RX"
+    users_m = "*S-1-5-32-545:(OI)(CI)M"
+    users_r = "*S-1-5-32-545:(OI)(CI)R"
+    commands = [_grant(data, system, admins, service, users_rx, traverse=False)]
+    commands.extend(_lock(data / "private", system, admins, service))
+    commands.extend(_lock(data / "app", system, admins, service_rx))
+    commands.extend(_lock(data / "models", system, admins, service_rx))
+    commands.extend(_lock(data / "control", system, admins, service, users_m))
+    commands.extend(_lock(data / "logs", system, admins, service, users_r))
+    return commands
 
 
 def resolve_package_root(start: Path) -> Path:
