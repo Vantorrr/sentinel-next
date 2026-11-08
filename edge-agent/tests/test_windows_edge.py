@@ -143,21 +143,7 @@ def test_install_is_idempotent_and_keeps_config(tmp_path: Path):
     assert "SECRET" not in (root / ".env").read_text(encoding="utf-8")
     assert str(data / "models" / "yolo11n.pt") in saved
     second = apply_install(root, data, runner, base)
-    if sys.platform == "win32":
-        import subprocess
-        assert "pip" in second
-        subprocess.run(
-            ["takeown", "/F", str(data / "app" / ".venv"), "/A", "/R", "/D", "Y"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        third = apply_install(root, data, runner, base)
-        assert "pip" not in third
-        saved_again = (data / "private" / "config.env").read_text(encoding="utf-8")
-        assert saved_again == saved
-    else:
-        assert "pip" not in second
+    assert "pip" not in second
     assert (data / "private" / "config.env").read_text(encoding="utf-8") == saved
     pip_calls = [item for item in calls if "pip" in item]
     assert any("https://download.pytorch.org/whl/cpu" in part for item in pip_calls for part in item)
@@ -174,8 +160,8 @@ def test_install_is_idempotent_and_keeps_config(tmp_path: Path):
     assert presets[:6] == ["data", "private", "app", "models", "control", "logs"]
     script = Path(__file__).resolve().parents[1] / "packaging" / "Set-SentinelAcl.ps1"
     script_text = script.read_text(encoding="utf-8")
-    private_block = script_text.split('"private" {', 1)[1].split('"app" {', 1)[0]
-    control_block = script_text.split('"control" {', 1)[1].split('"logs" {', 1)[0]
+    private_block = script_text.split('eq "private"', 1)[1].split("elseif", 1)[0]
+    control_block = script_text.split('eq "control"', 1)[1].split("elseif", 1)[0]
     assert "S-1-5-32-545" not in private_block
     assert "S-1-5-32-545" in control_block
     from sentinel_edge.install_win import package_digest, stamp_material
@@ -611,8 +597,9 @@ def test_real_icacls_removes_users_from_private(tmp_path: Path):
         text=True,
     )
     for _ in range(2):
-        for command in acl_commands(data):
-            subprocess.run(command, check=True, capture_output=True, text=True)
+            for command in acl_commands(data):
+                completed = subprocess.run(command, capture_output=True, text=True)
+                assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
     def aces(target: Path) -> str:
         listing = subprocess.run(["icacls", str(target)], check=True, capture_output=True, text=True)
         return listing.stdout.replace(str(target), "")
