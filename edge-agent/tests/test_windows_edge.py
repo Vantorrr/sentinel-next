@@ -564,7 +564,7 @@ def test_trusted_root_rejects_users_write(tmp_path: Path):
         capture_output=True,
         text=True,
     )
-    assert failed.returncode == 3
+    assert failed.returncode == 3, failed.stdout + failed.stderr
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="icacls exists on the Windows runner")

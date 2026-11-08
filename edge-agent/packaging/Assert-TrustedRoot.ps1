@@ -2,22 +2,33 @@ param(
     [Parameter(Mandatory = $true)][string]$Root
 )
 $ErrorActionPreference = "Stop"
-$item = Get-Item -LiteralPath $Root -Force
-if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+$item = New-Object System.IO.DirectoryInfo $Root
+if (-not $item.Exists) {
+    Write-Error "Package folder was not found."
+    exit 2
+}
+if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
     Write-Error "Package path is a link or junction. Copy the folder to a normal directory and run Install again."
     exit 2
 }
-$acl = Get-Acl -LiteralPath $Root
+if ($PSVersionTable.PSVersion.Major -ge 6) {
+    $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($item)
+} else {
+    $acl = $item.GetAccessControl()
+}
 $writeBits = 0x0002 -bor 0x0004 -bor 0x0010 -bor 0x0040 -bor 0x0100 -bor 0x10000
 foreach ($ace in $acl.Access) {
-    if ($ace.AccessControlType -ne "Allow") { continue }
-    $sid = $ace.IdentityReference.Value
-    try {
-        $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
-    } catch {
-        $sid = $ace.IdentityReference.Value
+    if ($ace.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+    $name = $ace.IdentityReference.Value
+    $sid = $name
+    if ($name -notmatch "^S-1-") {
+        try {
+            $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+        } catch {
+            $sid = $name
+        }
     }
-    $isUsers = ($sid -eq "S-1-5-32-545") -or ($ace.IdentityReference.Value -match "\\Users$")
+    $isUsers = ($sid -eq "S-1-5-32-545") -or ($name -match "\\Users$")
     if (-not $isUsers) { continue }
     if (([int]$ace.FileSystemRights -band $writeBits) -ne 0) {
         Write-Error "Users can write this folder. Move it somewhere only an administrator can change, then run Install again."
