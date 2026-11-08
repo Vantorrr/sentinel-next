@@ -637,6 +637,7 @@ def test_trusted_root_rejects_users_write(tmp_path: Path):
     opened = tmp_path / "open"
     opened.mkdir()
     subprocess.run(["icacls", str(opened), "/inheritance:d"], check=True, capture_output=True, text=True)
+    subprocess.run(["icacls", str(opened), "/setowner", "*S-1-5-32-544"], check=True, capture_output=True, text=True)
     subprocess.run(
         ["icacls", str(opened), "/grant:r", "*S-1-5-32-545:(OI)(CI)M"],
         check=True,
@@ -703,10 +704,12 @@ def test_trust_gate_rejects_a_writable_requirements_file(tmp_path: Path):
     root = tmp_path / "pkg"
     root.mkdir()
     subprocess.run(["icacls", str(root), "/inheritance:d"], check=True, capture_output=True, text=True)
+    subprocess.run(["icacls", str(root), "/setowner", "*S-1-5-32-544"], check=True, capture_output=True, text=True)
     subprocess.run(["icacls", str(root), "/remove", "*S-1-5-32-545"], check=True, capture_output=True, text=True)
     subprocess.run(["icacls", str(root), "/remove", "*S-1-3-4"], check=True, capture_output=True, text=True)
     planted = root / "requirements-windows.txt"
     planted.write_text("x\n", encoding="utf-8")
+    subprocess.run(["icacls", str(planted), "/setowner", "*S-1-5-32-544"], check=True, capture_output=True, text=True)
     subprocess.run(["icacls", str(planted), "/grant", "*S-1-5-32-546:M"], check=True, capture_output=True, text=True)
     failed = subprocess.run(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Root", str(root)],

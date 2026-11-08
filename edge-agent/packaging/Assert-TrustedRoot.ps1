@@ -36,7 +36,7 @@ function Test-Node($entry) {
     $acl = Get-AclOf $entry
     $owner = Convert-ToSid $acl.Owner
     if ($owner -ne "S-1-5-32-544" -and $owner -ne "S-1-5-18" -and $owner -ne $me) {
-        [Console]::Error.WriteLine("Owner is not Administrators or the installing user: $($entry.FullName)")
+        [Console]::Error.WriteLine("Owner is not Administrators or the installing user ($owner): $($entry.FullName)")
         exit 4
     }
     $allowed = @("S-1-5-18", "S-1-5-32-544")
