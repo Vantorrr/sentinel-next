@@ -33,6 +33,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install fastapi sqlalchemy asyncpg alembic pydantic-settings python-jose bcrypt redis loguru httpx pytest pytest-asyncio email-validator
+      - run: pip install fastapi "sqlalchemy[asyncio]>=2.0,<2.1" asyncpg alembic pydantic-settings python-jose bcrypt redis loguru httpx pytest pytest-asyncio email-validator
       - run: python -m alembic upgrade head
       - run: python -m pytest tests/test_edge_ingestion.py -q
