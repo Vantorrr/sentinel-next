@@ -157,9 +157,12 @@ def test_install_is_idempotent_and_keeps_config(tmp_path: Path):
     assert str(root) not in xml
     assert "SECRET" not in xml
     presets = [item[-1] for item in calls if item[:5] == ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]]
-    assert presets[:6] == ["data", "private", "app", "models", "control", "logs"]
+    assert presets[:6] == ["private", "app", "models", "control", "logs", "data"]
     script = Path(__file__).resolve().parents[1] / "packaging" / "Set-SentinelAcl.ps1"
     script_text = script.read_text(encoding="utf-8")
+    assert "takeown.exe" not in script_text.lower()
+    assert "/d y" not in script_text.lower()
+    assert 'if ($Preset -eq "data")' in script_text
     private_block = script_text.split('eq "private"', 1)[1].split("elseif", 1)[0]
     control_block = script_text.split('eq "control"', 1)[1].split("elseif", 1)[0]
     assert "S-1-5-32-545" not in private_block
@@ -513,6 +516,41 @@ def test_new_venv_and_source_change_reinstall(tmp_path: Path):
     assert calls
 
 
+def test_untrusted_config_and_model_are_left_unused(tmp_path: Path):
+    from sentinel_edge.install_win import UntrustedExistingData
+    root, data, calls, runner = _install_root(tmp_path)
+    dest = data / "private" / "config.env"
+    dest.parent.mkdir(parents=True)
+    dest.write_text("SENTINEL_API_KEY=keep-me\n", encoding="utf-8")
+    model = data / "models" / "yolo11n.pt"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"planted-weights")
+    with pytest.raises(UntrustedExistingData) as caught:
+        apply_install(root, data, runner, Path(r"C:\Program Files\Python312\python.exe"), owner_check=lambda _path: False)
+    assert dest in caught.value.paths
+    assert model in caught.value.paths
+    assert dest.read_text(encoding="utf-8") == "SENTINEL_API_KEY=keep-me\n"
+    assert model.read_bytes() == b"planted-weights"
+    assert calls == []
+
+
+def test_planted_venv_is_removed_before_any_command(tmp_path: Path):
+    root, data, calls, runner = _install_root(tmp_path)
+    planted = data / "app" / ".venv" / "Scripts" / "python.exe"
+    planted.parent.mkdir(parents=True)
+    planted.write_text("PLANTED", encoding="utf-8")
+    base = Path(r"C:\Program Files\Python312\python.exe")
+
+    def owner_check(path: Path) -> bool:
+        return False
+
+    apply_install(root, data, runner, base, owner_check=owner_check)
+    assert planted.read_text(encoding="utf-8") != "PLANTED"
+    venv_create = next(index for index, command in enumerate(calls) if command[1:3] == ["-m", "venv"])
+    assert calls[venv_create][0] == str(base)
+    assert all(command[0] != str(planted) for command in calls[:venv_create])
+
+
 def test_symlink_data_dir_is_refused(tmp_path: Path):
     root, _data, calls, runner = _install_root(tmp_path)
     target = tmp_path / "elsewhere"
@@ -606,6 +644,11 @@ def test_real_icacls_removes_users_from_private(tmp_path: Path):
 
     assert "Users" not in aces(secret)
     assert "Guests" not in aces(data / "private")
+    data_only = [item for item in acl_commands(data) if item[-1] == "data"]
+    for command in data_only:
+        completed = subprocess.run(command, capture_output=True, text=True)
+        assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr
+    assert "Users" not in aces(secret)
     status = data / "status.json"
     status.write_text("{}\n", encoding="utf-8")
     assert "Users" in aces(status)

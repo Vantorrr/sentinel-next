@@ -150,11 +150,35 @@ def acl_script() -> Path:
     raise FileNotFoundError("Set-SentinelAcl.ps1")
 
 
+class UntrustedExistingData(RuntimeError):
+    """A pre-existing config or model is not owned by Administrators.
+
+    The file is left on disk and is not loaded. The installer does not
+    delete it: that choice belongs to the operator.
+    """
+
+    def __init__(self, paths: list[Path]) -> None:
+        self.paths = paths
+        listed = "\n".join(str(path) for path in paths)
+        super().__init__(
+            "These files exist and are not owned by Administrators. "
+            "They were left unchanged and were not used. "
+            "Move them aside, then run Install again.\n"
+            "Файлы оставлены на месте и не использовались. "
+            "Переместите их в сторону и снова запустите Install.\n"
+            + listed
+        )
+
+
 def acl_commands(data: Path) -> list[list[str]]:
-    """Replace each directory DACL. icacls /grant leaves the creator's ACE behind."""
+    """Replace each directory DACL. Secrets are locked before the data root.
+
+    The data preset must not walk private, app, or models: that walk grants
+    Users read access for the duration of the sweep.
+    """
     script = str(acl_script())
     commands = []
-    for name in ("data", "private", "app", "models", "control", "logs"):
+    for name in ("private", "app", "models", "control", "logs", "data"):
         folder = data if name == "data" else data / name
         commands.append([
             "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -282,18 +306,47 @@ def ensure_real_dir(path: Path) -> None:
     reject_reparse(path)
 
 
-def apply_install(root: Path, data: Path, runner, base_python: Path) -> list[str]:
-    """Install into ProgramData. The boot task must not run a user-writable tree."""
+def apply_install(
+    root: Path,
+    data: Path,
+    runner,
+    base_python: Path,
+    owner_check=None,
+) -> list[str]:
+    """Install into ProgramData. The boot task must not run a user-writable tree.
+
+    Ownership is read before any ACL change. takeown would make a planted
+    venv look trusted and the elevated installer would then run it.
+    """
+    check = owner_check or administrators_own
     ensure_real_dir(data)
     for name in ("private", "app", "models", "control", "logs"):
         ensure_real_dir(data / name)
+
+    dest = data / "private" / "config.env"
+    model = data / "models" / "yolo11n.pt"
+    flat = data / "config.env"
+    blocked: list[Path] = []
+    if dest.exists() and not check(dest):
+        blocked.append(dest)
+    if flat.is_file() and not dest.exists() and not check(flat):
+        blocked.append(flat)
+    if model.exists() and model.stat().st_size > 0 and not check(model):
+        blocked.append(model)
+    if blocked:
+        raise UntrustedExistingData(blocked)
+
+    app = data / "app"
+    venv_dir = app / ".venv"
+    venv_python = venv_dir / "Scripts" / "python.exe"
+    if venv_dir.exists() and not check(venv_dir):
+        import shutil
+        shutil.rmtree(venv_dir)
     for command in acl_commands(data):
         runner(command)
 
     example = example_env_path(root).read_text(encoding="utf-8")
     source = config_source(root)
-    dest = data / "private" / "config.env"
-    flat = data / "config.env"
     chosen = flat if not dest.exists() and flat.is_file() else source
     action = migrate_config(chosen, dest, example)
     values = parse_env(dest.read_text(encoding="utf-8"))
@@ -306,12 +359,6 @@ def apply_install(root: Path, data: Path, runner, base_python: Path) -> list[str
     if flat.is_file() and flat.resolve() != dest.resolve() and "SENTINEL_" in flat.read_text(encoding="utf-8"):
         retire_secret_source(flat)
 
-    app = data / "app"
-    venv_dir = app / ".venv"
-    venv_python = venv_dir / "Scripts" / "python.exe"
-    if venv_dir.exists() and not administrators_own(venv_dir):
-        import shutil
-        shutil.rmtree(venv_dir)
     venv_created = not venv_python.exists()
     if venv_created:
         runner([str(base_python), "-m", "venv", str(venv_dir)])
