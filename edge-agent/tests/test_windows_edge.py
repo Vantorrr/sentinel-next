@@ -559,12 +559,32 @@ def test_trusted_root_rejects_users_write(tmp_path: Path):
     script = Path(__file__).resolve().parents[1] / "packaging" / "Assert-TrustedRoot.ps1"
     opened = tmp_path / "open"
     opened.mkdir()
+    subprocess.run(["icacls", str(opened), "/inheritance:d"], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["icacls", str(opened), "/grant:r", "*S-1-5-32-545:(OI)(CI)M"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     failed = subprocess.run(
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Root", str(opened)],
         capture_output=True,
         text=True,
     )
-    assert failed.returncode == 3, failed.stdout + failed.stderr
+    listed = subprocess.run(["icacls", str(opened)], capture_output=True, text=True)
+    assert failed.returncode == 3, listed.stdout + failed.stdout + failed.stderr
+    subprocess.run(
+        ["icacls", str(opened), "/remove:g", "*S-1-5-32-545"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    allowed = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Root", str(opened)],
+        capture_output=True,
+        text=True,
+    )
+    assert allowed.returncode == 0, allowed.stdout + allowed.stderr
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="icacls exists on the Windows runner")

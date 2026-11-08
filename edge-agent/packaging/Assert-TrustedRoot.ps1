@@ -28,8 +28,9 @@ foreach ($ace in $acl.Access) {
             $sid = $name
         }
     }
-    $isUsers = ($sid -eq "S-1-5-32-545") -or ($name -match "\\Users$")
-    if (-not $isUsers) { continue }
+    $broad = @("S-1-5-32-545", "S-1-5-11", "S-1-1-0")
+    $isBroad = ($broad -contains $sid) -or ($name -match "\\(Users|Everyone|Authenticated Users)$")
+    if (-not $isBroad) { continue }
     if (([int]$ace.FileSystemRights -band $writeBits) -ne 0) {
         Write-Error "Users can write this folder. Move it somewhere only an administrator can change, then run Install again."
         exit 3
