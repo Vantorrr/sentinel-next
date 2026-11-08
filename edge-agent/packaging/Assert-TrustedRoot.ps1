@@ -9,7 +9,7 @@ if (-not $item.Exists) {
 }
 
 function Get-AclOf($entry) {
-    $sections = [System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner
+    $sections = [System.Security.AccessControl.AccessControlSections]::All
     if ($entry.PSIsContainer) {
         return New-Object System.Security.AccessControl.DirectorySecurity($entry.FullName, $sections)
     }
@@ -35,6 +35,10 @@ function Test-Node($entry) {
         exit 2
     }
     $acl = Get-AclOf $entry
+    if ($env:SENTINEL_ACL_DEBUG -eq "1") {
+        $shown = ($acl.Access | ForEach-Object { "$($_.IdentityReference.Value)=$($_.FileSystemRights)" }) -join ";"
+        [Console]::Error.WriteLine("ACL $($entry.FullName) :: $shown")
+    }
     $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
     if ($owner -ne "S-1-5-32-544" -and $owner -ne "S-1-5-18" -and $owner -ne $me) {
         [Console]::Error.WriteLine("Owner is not Administrators or the installing user ($owner): $($entry.FullName)")

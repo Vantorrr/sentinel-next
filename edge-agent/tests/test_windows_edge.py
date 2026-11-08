@@ -716,6 +716,7 @@ def test_trust_gate_rejects_a_writable_requirements_file(tmp_path: Path):
         ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Root", str(root)],
         capture_output=True,
         text=True,
+        env={**os.environ, "SENTINEL_ACL_DEBUG": "1"},
     )
     assert "Guests" in listed.stdout, listed.stdout + listed.stderr
     assert failed.returncode == 3, listed.stdout + failed.stdout + failed.stderr
