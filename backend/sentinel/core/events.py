@@ -103,19 +103,22 @@ class EventBus:
             await self._sub.subscribe(CHANNEL_ALL)
         except Exception as exc:
             raise RuntimeError(
-                f"Cannot connect to Redis at {url!r}. "
+                f"Cannot connect to Redis ({type(exc).__name__}). "
                 "Add a Redis service in the same Railway project and set REDIS_URL "
                 "via Variable Reference."
-            ) from exc
+            ) from None
         asyncio.create_task(self._dispatch_loop(), name="eventbus-dispatch")
-        logger.info("📡 EventBus connected — redis={}", url)
+        logger.info("📡 EventBus connected to Redis")
 
     async def disconnect(self) -> None:
-        if self._sub:
-            await self._sub.unsubscribe(CHANNEL_ALL)
-            await self._sub.aclose()
-        if self._pub:
-            await self._pub.aclose()
+        try:
+            if self._sub:
+                await self._sub.unsubscribe(CHANNEL_ALL)
+                await self._sub.aclose()
+            if self._pub:
+                await self._pub.aclose()
+        except Exception as exc:
+            raise RuntimeError(f"Redis shutdown failed ({type(exc).__name__})") from None
         logger.info("📡 EventBus disconnected")
 
     async def publish(self, event: SentinelEvent, reliable: bool = False) -> None:
@@ -137,10 +140,10 @@ class EventBus:
             try:
                 await self._pub.publish(CHANNEL_ALL, event.to_json())
             except Exception as exc:
-                logger.warning("EventBus.publish Redis error: {}", exc)
+                logger.warning("EventBus.publish Redis error: {}", type(exc).__name__)
                 self._locally_published.discard(event.id)
                 if reliable:
-                    raise
+                    raise RuntimeError("Redis publication failed") from None
 
     def subscribe(self) -> asyncio.Queue[SentinelEvent]:
         q: asyncio.Queue[SentinelEvent] = asyncio.Queue(maxsize=512)
@@ -171,8 +174,8 @@ class EventBus:
                         except asyncio.QueueFull:
                             pass
                 except Exception as exc:
-                    logger.warning("EventBus dispatch error: {}", exc)
+                    logger.warning("EventBus dispatch error: {}", type(exc).__name__)
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            logger.error("EventBus dispatch loop crashed: {}", exc)
+            logger.error("EventBus dispatch loop crashed: {}", type(exc).__name__)

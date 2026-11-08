@@ -46,12 +46,11 @@ async def _check_database() -> dict[str, Any]:
 async def _check_redis() -> dict[str, Any]:
     t0 = time.monotonic()
     try:
-        r = aioredis.from_url(cfg.REDIS_URL, socket_connect_timeout=2)
-        await r.ping()
-        await r.aclose()
+        async with aioredis.from_url(cfg.REDIS_URL, socket_connect_timeout=2) as client:
+            await client.ping()
         return {"ok": True, "latency_ms": round((time.monotonic() - t0) * 1000, 1)}
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": type(exc).__name__}
 
 
 async def _check_qdrant() -> dict[str, Any]:

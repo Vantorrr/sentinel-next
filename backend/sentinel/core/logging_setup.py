@@ -86,6 +86,7 @@ def setup_logging(level: str = "INFO") -> None:
         level="DEBUG",
         format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{line} | {message}",
         enqueue=True,
+        diagnose=False,
     )
 
     # Intercept stdlib
