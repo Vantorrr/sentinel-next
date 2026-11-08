@@ -1,8 +1,8 @@
 @echo off
 chcp 65001 >nul
 set "HERE=%~dp0"
-set "ROOT=%HERE%"
-if not exist "%ROOT%sentinel_edge\cli.py" set "ROOT=%HERE%.."
+for %%I in ("%HERE%.") do set "ROOT=%%~fI"
+if not exist "%ROOT%\sentinel_edge\cli.py" for %%I in ("%ROOT%\..") do set "ROOT=%%~fI"
 cd /d "%ROOT%"
 
 net session >nul 2>&1

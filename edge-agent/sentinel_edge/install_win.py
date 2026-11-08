@@ -142,56 +142,52 @@ def schtasks_delete_argv() -> list[str]:
     return ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"]
 
 
-def _grant(folder: Path, *aces: str, traverse: bool) -> list[str]:
-    command = ["icacls", str(folder)]
-    if traverse:
-        command.append("/T")
-    for ace in aces:
-        command.extend(["/grant:r", ace])
-    return command
-
-
-def _lock(folder: Path, *aces: str) -> list[list[str]]:
-    """Break inheritance, drop Users, then write only the ACEs we pass in.
-
-    One icacls invocation that mixes /inheritance:r with /grant:r keeps an
-    explicit Users entry written earlier. These are separate invocations.
-    """
-    return [
-        ["icacls", str(folder), "/inheritance:d", "/T"],
-        ["icacls", str(folder), "/remove:g", "*S-1-5-32-545", "/T"],
-        _grant(folder, *aces, traverse=True),
-    ]
+def acl_script() -> Path:
+    base = Path(__file__).resolve().parents[1]
+    for candidate in (base / "packaging" / "Set-SentinelAcl.ps1", base / "Set-SentinelAcl.ps1"):
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError("Set-SentinelAcl.ps1")
 
 
 def acl_commands(data: Path) -> list[list[str]]:
-    """Lock code and secrets. Operators can read status and write only stop.request.
-
-    SIDs stay numeric so a non-English Windows install targets the same accounts.
-    The data folder does not inherit ProgramData's create-file right, so a
-    standard user cannot plant edge.pid. Users still receive read and execute
-    on new files such as status.json. The grant does not use /T.
-    """
-    system = "*S-1-5-18:(OI)(CI)F"
-    admins = "*S-1-5-32-544:(OI)(CI)F"
-    service = "*S-1-5-19:(OI)(CI)M"
-    service_rx = "*S-1-5-19:(OI)(CI)RX"
-    users_rx = "*S-1-5-32-545:(OI)(CI)RX"
-    users_m = "*S-1-5-32-545:(OI)(CI)M"
-    users_r = "*S-1-5-32-545:(OI)(CI)R"
-    # No /T here. Traversing would paint Users onto private and app, and the
-    # inherited ProgramData "create files" right is what lets a user plant edge.pid.
-    commands = [
-        ["icacls", str(data), "/inheritance:d"],
-        ["icacls", str(data), "/remove:g", "*S-1-5-32-545"],
-        _grant(data, system, admins, service, users_rx, traverse=False),
-    ]
-    commands.extend(_lock(data / "private", system, admins, service))
-    commands.extend(_lock(data / "app", system, admins, service_rx))
-    commands.extend(_lock(data / "models", system, admins, service_rx))
-    commands.extend(_lock(data / "control", system, admins, service, users_m))
-    commands.extend(_lock(data / "logs", system, admins, service, users_r))
+    """Replace each directory DACL. icacls /grant leaves the creator's ACE behind."""
+    script = str(acl_script())
+    commands = []
+    for name in ("data", "private", "app", "models", "control", "logs"):
+        folder = data if name == "data" else data / name
+        commands.append([
+            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", script, "-Path", str(folder), "-Preset", name,
+        ])
     return commands
+
+
+def administrators_own(path: Path) -> bool:
+    """False on Windows unless the Administrators group owns the path.
+
+    A venv created by a standard user before install must not be executed.
+    Tests on other platforms treat an existing path as the one the fake
+    installer just created.
+    """
+    if not path.exists():
+        return False
+    if sys.platform != "win32":
+        return True
+    import ctypes
+    owner = ctypes.c_void_p()
+    security = ctypes.c_void_p()
+    error = ctypes.windll.advapi32.GetNamedSecurityInfoW(
+        str(path), 1, 0x00000001, ctypes.byref(owner), None, None, None, ctypes.byref(security),
+    )
+    if error != 0 or not owner.value:
+        return False
+    text = ctypes.c_wchar_p()
+    ctypes.windll.advapi32.ConvertSidToStringSidW(owner, ctypes.byref(text))
+    value = text.value or ""
+    ctypes.windll.kernel32.LocalFree(text)
+    ctypes.windll.kernel32.LocalFree(security)
+    return value == "S-1-5-32-544"
 
 
 def resolve_package_root(start: Path) -> Path:
@@ -311,10 +307,14 @@ def apply_install(root: Path, data: Path, runner, base_python: Path) -> list[str
         retire_secret_source(flat)
 
     app = data / "app"
-    venv_python = app / ".venv" / "Scripts" / "python.exe"
+    venv_dir = app / ".venv"
+    venv_python = venv_dir / "Scripts" / "python.exe"
+    if venv_dir.exists() and not administrators_own(venv_dir):
+        import shutil
+        shutil.rmtree(venv_dir)
     venv_created = not venv_python.exists()
     if venv_created:
-        runner([str(base_python), "-m", "venv", str(app / ".venv")])
+        runner([str(base_python), "-m", "venv", str(venv_dir)])
     torch_file = root / "requirements-torch-cpu.txt"
     requirements = root / "requirements-windows.txt"
     stamp = data / "install-stamp.txt"

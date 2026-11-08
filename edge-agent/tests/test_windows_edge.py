@@ -143,7 +143,21 @@ def test_install_is_idempotent_and_keeps_config(tmp_path: Path):
     assert "SECRET" not in (root / ".env").read_text(encoding="utf-8")
     assert str(data / "models" / "yolo11n.pt") in saved
     second = apply_install(root, data, runner, base)
-    assert "pip" not in second
+    if sys.platform == "win32":
+        import subprocess
+        assert "pip" in second
+        subprocess.run(
+            ["takeown", "/F", str(data / "app" / ".venv"), "/A", "/R", "/D", "Y"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        third = apply_install(root, data, runner, base)
+        assert "pip" not in third
+        saved_again = (data / "private" / "config.env").read_text(encoding="utf-8")
+        assert saved_again == saved
+    else:
+        assert "pip" not in second
     assert (data / "private" / "config.env").read_text(encoding="utf-8") == saved
     pip_calls = [item for item in calls if "pip" in item]
     assert any("https://download.pytorch.org/whl/cpu" in part for item in pip_calls for part in item)
@@ -156,22 +170,14 @@ def test_install_is_idempotent_and_keeps_config(tmp_path: Path):
     assert str(data / "private" / "config.env") in xml
     assert str(root) not in xml
     assert "SECRET" not in xml
-    def grants(folder: Path) -> list[str]:
-        found = []
-        for item in calls:
-            if item[:2] != ["icacls", str(folder)]:
-                continue
-            for idx, part in enumerate(item[:-1]):
-                if part == "/grant:r":
-                    found.append(item[idx + 1])
-        return found
-
-    private_calls = [item for item in calls if item[:2] == ["icacls", str(data / "private")]]
-    assert private_calls and any("/T" in item for item in private_calls)
-    assert any("/remove:g" in item and "*S-1-5-32-545" in item for item in private_calls)
-    assert all("S-1-5-32-545" not in ace for ace in grants(data / "private"))
-    assert all("S-1-5-32-545" not in ace for ace in grants(data / "app"))
-    assert any("S-1-5-32-545" in ace for ace in grants(data / "control"))
+    presets = [item[-1] for item in calls if item[:5] == ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]]
+    assert presets[:6] == ["data", "private", "app", "models", "control", "logs"]
+    script = Path(__file__).resolve().parents[1] / "packaging" / "Set-SentinelAcl.ps1"
+    script_text = script.read_text(encoding="utf-8")
+    private_block = script_text.split('"private" {', 1)[1].split('"app" {', 1)[0]
+    control_block = script_text.split('"control" {', 1)[1].split('"logs" {', 1)[0]
+    assert "S-1-5-32-545" not in private_block
+    assert "S-1-5-32-545" in control_block
     from sentinel_edge.install_win import package_digest, stamp_material
     stamp = data / "install-stamp.txt"
     venv_python = data / "app" / ".venv" / "Scripts" / "python.exe"
@@ -358,6 +364,7 @@ def test_bat_scripts_split_status_stop_and_python():
     stop = (packaging / "Stop.bat").read_text(encoding="utf-8")
     assert "InstallAllUsers=1" in install
     assert "Assert-TrustedRoot.ps1" in install
+    assert 'for %%I in ("%HERE%.") do set "ROOT=%%~fI"' in install
     assert "InstallAllUsers=0" not in install
     assert "LocalAppData" not in install
     assert r"%ProgramFiles%\Python312\python.exe" in install
@@ -597,6 +604,12 @@ def test_real_icacls_removes_users_from_private(tmp_path: Path):
         (data / name).mkdir(parents=True)
     secret = data / "private" / "config.env"
     secret.write_text("SENTINEL_API_KEY=secret\n", encoding="utf-8")
+    subprocess.run(
+        ["icacls", str(data / "private"), "/grant", "*S-1-5-32-546:(OI)(CI)M"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     for _ in range(2):
         for command in acl_commands(data):
             subprocess.run(command, check=True, capture_output=True, text=True)
@@ -605,6 +618,7 @@ def test_real_icacls_removes_users_from_private(tmp_path: Path):
         return listing.stdout.replace(str(target), "")
 
     assert "Users" not in aces(secret)
+    assert "Guests" not in aces(data / "private")
     status = data / "status.json"
     status.write_text("{}\n", encoding="utf-8")
     assert "Users" in aces(status)
