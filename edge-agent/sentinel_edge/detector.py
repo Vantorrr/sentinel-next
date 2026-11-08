@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
-import cv2
 import numpy as np
 import supervision as sv
 from loguru import logger
 from ultralytics import YOLO
-
-from sentinel_edge.config import cfg
 
 
 class LocalDetector:
@@ -19,13 +15,18 @@ class LocalDetector:
 
     PERSON_CLASS_ID = 0
 
-    def __init__(self) -> None:
+    def __init__(self, settings=None) -> None:
+        from sentinel_edge.config import EdgeSettings
+        self._settings = settings if isinstance(settings, EdgeSettings) else None
+        fps = self._settings.fps_inference if self._settings else 5
+        self._model_name = self._settings.yolo_model if self._settings else "yolo11n.pt"
+        self._confidence = self._settings.yolo_confidence if self._settings else 0.35
         self._model: YOLO | None = None
         self._tracker = sv.ByteTrack(
             track_activation_threshold=0.4,
             lost_track_buffer=60,
             minimum_matching_threshold=0.7,
-            frame_rate=cfg.FPS_INFERENCE,
+            frame_rate=fps,
         )
         self._active_tracks: set[int] = set()
         self._frame_count = 0
@@ -33,10 +34,10 @@ class LocalDetector:
         self._last_fps_time = time.time()
 
     def load(self) -> None:
-        model_path = cfg.YOLO_MODEL
-        logger.info("Loading YOLO: {}", model_path)
+        model_path = self._model_name
+        logger.info("Loading YOLO model file name")
         self._model = YOLO(model_path, verbose=False)
-        logger.success("YOLO loaded: {}", model_path)
+        logger.success("YOLO loaded")
 
     def process_frame(self, frame: np.ndarray, camera_id: str) -> list[dict]:
         """Run detection + tracking on a single frame. Returns event dicts."""
@@ -50,7 +51,7 @@ class LocalDetector:
             self._frame_count = 0
             self._last_fps_time = now
 
-        results = self._model(frame, conf=cfg.YOLO_CONFIDENCE, verbose=False)[0]
+        results = self._model(frame, conf=self._confidence, verbose=False)[0]
 
         detections = sv.Detections.from_ultralytics(results)
         person_mask = detections.class_id == self.PERSON_CLASS_ID
