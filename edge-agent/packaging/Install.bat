@@ -21,6 +21,9 @@ if not exist "%PYEXE%" (
   if errorlevel 1 goto :fail
 )
 
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Assert-TrustedRoot.ps1" -Root "%ROOT%"
+if errorlevel 1 goto :fail
+
 set "PYTHONPATH=%ROOT%"
 "%PYEXE%" -m sentinel_edge.install_win install --root "%ROOT%"
 if errorlevel 1 goto :fail

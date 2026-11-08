@@ -172,12 +172,13 @@ def test_install_is_idempotent_and_keeps_config(tmp_path: Path):
     assert all("S-1-5-32-545" not in ace for ace in grants(data / "private"))
     assert all("S-1-5-32-545" not in ace for ace in grants(data / "app"))
     assert any("S-1-5-32-545" in ace for ace in grants(data / "control"))
-    from sentinel_edge.install_win import stamp_material
+    from sentinel_edge.install_win import package_digest, stamp_material
     stamp = data / "install-stamp.txt"
     venv_python = data / "app" / ".venv" / "Scripts" / "python.exe"
     text = stamp_material(
         (root / "requirements-windows.txt").read_text(encoding="utf-8"),
         (root / "requirements-torch-cpu.txt").read_text(encoding="utf-8"),
+        package_digest(root),
     )
     assert pip_needed(stamp, text, venv_python) is False
     model = data / "models" / "yolo11n.pt"
@@ -347,6 +348,7 @@ def test_frame_interval_follows_configured_fps():
     assert capture_interval(0) == 1.0
     source = Path(__file__).resolve().parents[1].joinpath("sentinel_edge", "cli.py").read_text(encoding="utf-8")
     assert "frame_interval=capture_interval(settings.fps_inference)" in source
+    assert 'data / "private" / "edge.pid"' in source
 
 
 def test_bat_scripts_split_status_stop_and_python():
@@ -355,6 +357,7 @@ def test_bat_scripts_split_status_stop_and_python():
     status = (packaging / "Status.bat").read_text(encoding="utf-8")
     stop = (packaging / "Stop.bat").read_text(encoding="utf-8")
     assert "InstallAllUsers=1" in install
+    assert "Assert-TrustedRoot.ps1" in install
     assert "InstallAllUsers=0" not in install
     assert "LocalAppData" not in install
     assert r"%ProgramFiles%\Python312\python.exe" in install
@@ -485,6 +488,85 @@ async def test_overlapping_flushes_do_not_drop_unsent_events(tmp_path: Path):
     assert sender._queue.events == []
 
 
+def _install_root(tmp_path: Path):
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "env.example").write_text("SENTINEL_API_URL=https://example.test\n", encoding="utf-8")
+    (root / "requirements-windows.txt").write_text("x\n", encoding="utf-8")
+    (root / "requirements-torch-cpu.txt").write_text("torch==2.5.1\n", encoding="utf-8")
+    (root / "sentinel_edge").mkdir()
+    (root / "sentinel_edge" / "cli.py").write_text("x = 1\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def runner(command: list[str]) -> None:
+        calls.append(command)
+        if len(command) >= 3 and command[1:3] == ["-m", "venv"]:
+            py = Path(command[-1]) / "Scripts" / "python.exe"
+            py.parent.mkdir(parents=True, exist_ok=True)
+            py.write_text("", encoding="utf-8")
+
+    return root, tmp_path / "data", calls, runner
+
+
+def test_new_venv_and_source_change_reinstall(tmp_path: Path):
+    import shutil
+    root, data, calls, runner = _install_root(tmp_path)
+    base = Path(r"C:\Program Files\Python312\python.exe")
+    assert "pip" in apply_install(root, data, runner, base)
+    shutil.rmtree(data / "app" / ".venv")
+    assert "pip" in apply_install(root, data, runner, base)
+    (root / "sentinel_edge" / "cli.py").write_text("x = 2\n", encoding="utf-8")
+    assert "pip" in apply_install(root, data, runner, base)
+    assert calls
+
+
+def test_symlink_data_dir_is_refused(tmp_path: Path):
+    root, _data, calls, runner = _install_root(tmp_path)
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    link = tmp_path / "linked"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("creating a directory symlink is not allowed")
+    with pytest.raises(RuntimeError, match="symlink"):
+        apply_install(root, link, runner, Path(r"C:\Program Files\Python312\python.exe"))
+    assert calls == []
+
+
+def test_crash_log_does_not_dump_locals(tmp_path: Path):
+    from loguru import logger
+    from sentinel_edge.cli import _setup_log
+    secret = "salon-api-key-value"
+    _setup_log(tmp_path / "edge.log", "INFO")
+
+    def boom() -> None:
+        api_key = secret
+        if not api_key:
+            return
+        raise RuntimeError("failed")
+
+    try:
+        boom()
+    except RuntimeError:
+        logger.exception("Agent crashed: {}", "RuntimeError")
+    assert secret not in (tmp_path / "edge.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="powershell ACL")
+def test_trusted_root_rejects_users_write(tmp_path: Path):
+    import subprocess
+    script = Path(__file__).resolve().parents[1] / "packaging" / "Assert-TrustedRoot.ps1"
+    opened = tmp_path / "open"
+    opened.mkdir()
+    failed = subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Root", str(opened)],
+        capture_output=True,
+        text=True,
+    )
+    assert failed.returncode == 3
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="icacls exists on the Windows runner")
 def test_real_icacls_removes_users_from_private(tmp_path: Path):
     import subprocess
@@ -510,3 +592,8 @@ def test_real_icacls_removes_users_from_private(tmp_path: Path):
     stop.write_text("stop\n", encoding="utf-8")
     assert "Users" in aces(stop)
     assert "Users" not in aces(data / "app")
+    for line in aces(data).splitlines():
+        if "Users" in line:
+            assert "(RX)" in line
+            assert "(M)" not in line
+            assert "(F)" not in line

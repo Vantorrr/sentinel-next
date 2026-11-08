@@ -35,7 +35,13 @@ def _setup_log(path: Path, level: str) -> None:
         record["message"] = redact_text(str(record["message"]))
 
     logger.configure(patcher=_patch)
-    logger.add(sys.stderr, level=level, format="{time:HH:mm:ss} | {level} | {message}")
+    logger.add(
+        sys.stderr,
+        level=level,
+        format="{time:HH:mm:ss} | {level} | {message}",
+        diagnose=False,
+        backtrace=False,
+    )
     logger.add(
         path,
         level=level,
@@ -43,6 +49,8 @@ def _setup_log(path: Path, level: str) -> None:
         retention=5,
         encoding="utf-8",
         format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}",
+        diagnose=False,
+        backtrace=False,
     )
 
 
@@ -63,7 +71,7 @@ async def _run_async(config_path: Path | None, stop_flag: dict[str, bool]) -> No
             logger.error("{}", item)
         return
 
-    lock_path = data / "edge.pid"
+    lock_path = data / "private" / "edge.pid"
     if not acquire_pid_lock(lock_path):
         health.state = "already_running"
         write_status(status_path, health)

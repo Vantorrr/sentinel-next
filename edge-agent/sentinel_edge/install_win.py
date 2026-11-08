@@ -21,8 +21,22 @@ TASK_NAME = r"\SentinelEdge"
 LOCAL_SERVICE_SID = "S-1-5-19"
 
 
-def stamp_material(requirements: str, torch: str) -> str:
-    return requirements.rstrip() + "\n" + torch.rstrip() + "\n"
+def stamp_material(requirements: str, torch: str, package: str = "") -> str:
+    return requirements.rstrip() + "\n" + torch.rstrip() + "\n" + package.strip() + "\n"
+
+
+def package_digest(root: Path) -> str:
+    """Hash the agent sources so a bugfix zip is installed, not only a dep change."""
+    parts: list[str] = []
+    package = root / "sentinel_edge"
+    if package.is_dir():
+        for path in sorted(package.glob("*.py")):
+            parts.append(path.name)
+            parts.append(path.read_text(encoding="utf-8"))
+    manifest = root / "pyproject.toml"
+    if manifest.is_file():
+        parts.append(manifest.read_text(encoding="utf-8"))
+    return requirements_digest("\n".join(parts))
 
 
 def requirements_digest(text: str) -> str:
@@ -154,8 +168,9 @@ def acl_commands(data: Path) -> list[list[str]]:
     """Lock code and secrets. Operators can read status and write only stop.request.
 
     SIDs stay numeric so a non-English Windows install targets the same accounts.
-    The data folder keeps inheritance so a new status.json is readable. Its grant
-    does not use /T: that would write an explicit Users ACE into private and app.
+    The data folder does not inherit ProgramData's create-file right, so a
+    standard user cannot plant edge.pid. Users still receive read and execute
+    on new files such as status.json. The grant does not use /T.
     """
     system = "*S-1-5-18:(OI)(CI)F"
     admins = "*S-1-5-32-544:(OI)(CI)F"
@@ -164,7 +179,13 @@ def acl_commands(data: Path) -> list[list[str]]:
     users_rx = "*S-1-5-32-545:(OI)(CI)RX"
     users_m = "*S-1-5-32-545:(OI)(CI)M"
     users_r = "*S-1-5-32-545:(OI)(CI)R"
-    commands = [_grant(data, system, admins, service, users_rx, traverse=False)]
+    # No /T here. Traversing would paint Users onto private and app, and the
+    # inherited ProgramData "create files" right is what lets a user plant edge.pid.
+    commands = [
+        ["icacls", str(data), "/inheritance:d"],
+        ["icacls", str(data), "/remove:g", "*S-1-5-32-545"],
+        _grant(data, system, admins, service, users_rx, traverse=False),
+    ]
     commands.extend(_lock(data / "private", system, admins, service))
     commands.extend(_lock(data / "app", system, admins, service_rx))
     commands.extend(_lock(data / "models", system, admins, service_rx))
@@ -250,10 +271,26 @@ def install_actions(
     return actions
 
 
+def reject_reparse(path: Path) -> None:
+    """A junction or symlink would make later icacls lock the wrong tree."""
+    if path.is_symlink():
+        raise RuntimeError(f"refusing symlink: {path}")
+    is_junction = getattr(path, "is_junction", None)
+    if path.exists() and callable(is_junction) and is_junction():
+        raise RuntimeError(f"refusing junction: {path}")
+
+
+def ensure_real_dir(path: Path) -> None:
+    reject_reparse(path)
+    path.mkdir(parents=True, exist_ok=True)
+    reject_reparse(path)
+
+
 def apply_install(root: Path, data: Path, runner, base_python: Path) -> list[str]:
     """Install into ProgramData. The boot task must not run a user-writable tree."""
+    ensure_real_dir(data)
     for name in ("private", "app", "models", "control", "logs"):
-        (data / name).mkdir(parents=True, exist_ok=True)
+        ensure_real_dir(data / name)
     for command in acl_commands(data):
         runner(command)
 
@@ -275,7 +312,8 @@ def apply_install(root: Path, data: Path, runner, base_python: Path) -> list[str
 
     app = data / "app"
     venv_python = app / ".venv" / "Scripts" / "python.exe"
-    if not venv_python.exists():
+    venv_created = not venv_python.exists()
+    if venv_created:
         runner([str(base_python), "-m", "venv", str(app / ".venv")])
     torch_file = root / "requirements-torch-cpu.txt"
     requirements = root / "requirements-windows.txt"
@@ -283,9 +321,10 @@ def apply_install(root: Path, data: Path, runner, base_python: Path) -> list[str
     text = stamp_material(
         requirements.read_text(encoding="utf-8"),
         torch_file.read_text(encoding="utf-8"),
+        package_digest(root),
     )
     done: list[str] = []
-    if pip_needed(stamp, text, venv_python):
+    if venv_created or pip_needed(stamp, text, venv_python):
         runner([str(venv_python), "-m", "pip", "install", "-U", "pip"])
         for command in pip_commands(venv_python, torch_file, requirements):
             if command[3:5] == ["install", "-U"]:
