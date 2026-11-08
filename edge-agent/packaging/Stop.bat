@@ -1,11 +1,6 @@
 @echo off
-cd /d "%~dp0"
-set "PYTHONPATH=%~dp0"
-if exist ".venv\Scripts\python.exe" (
-  ".venv\Scripts\python.exe" -m sentinel_edge.cli stop --config "%ProgramData%\SentinelEdge\config.env"
-) else (
-  py -3 -m sentinel_edge.cli stop --config "%ProgramData%\SentinelEdge\config.env"
-)
+if not exist "%ProgramData%\SentinelEdge\control" mkdir "%ProgramData%\SentinelEdge\control"
+echo stop> "%ProgramData%\SentinelEdge\control\stop.request"
 schtasks /End /TN \SentinelEdge
-echo Stop requested.
+echo Stop requested. Config was not deleted.
 pause

@@ -47,7 +47,7 @@ def _setup_log(path: Path, level: str) -> None:
 
 
 async def _run_async(config_path: Path | None, stop_flag: dict[str, bool]) -> None:
-    from sentinel_edge.camera import CameraStream
+    from sentinel_edge.camera import CameraStream, capture_interval
     from sentinel_edge.detector import LocalDetector
     from sentinel_edge.sender import EventSender
 
@@ -72,9 +72,10 @@ async def _run_async(config_path: Path | None, stop_flag: dict[str, bool]) -> No
 
     detector = LocalDetector(settings)
     detector.load()
+    (data / "private").mkdir(parents=True, exist_ok=True)
     sender = EventSender(
         settings,
-        data / "queue.json",
+        data / "private" / "queue.json",
         health,
         fps_provider=lambda: detector.fps,
     )
@@ -97,7 +98,8 @@ async def _run_async(config_path: Path | None, stop_flag: dict[str, bool]) -> No
         loop=asyncio.get_running_loop(),
         signal_module=signal,
     )
-    stop_path = data / "stop.request"
+    stop_path = data / "control" / "stop.request"
+    stop_path.parent.mkdir(parents=True, exist_ok=True)
     if stop_path.exists():
         stop_path.unlink()
 
@@ -111,8 +113,21 @@ async def _run_async(config_path: Path | None, stop_flag: dict[str, bool]) -> No
 
     async def process_camera(source: str, idx: int) -> None:
         cam_id = f"edge-{settings.agent_id}-cam-{idx}"
-        stream = CameraStream(source, camera_id=cam_id)
         record = health.cameras[cam_id]
+
+        def _sync(stream: CameraStream, target=record) -> None:
+            target.opened = stream.opened
+            target.frames = stream._frames
+            target.last_open_wall = stream.last_open_wall
+            target.last_frame_wall = stream.last_frame_wall
+            target.last_error = stream.last_error
+
+        stream = CameraStream(
+            source,
+            camera_id=cam_id,
+            frame_interval=capture_interval(settings.fps_inference),
+            on_change=_sync,
+        )
         try:
             async for frame in stream.frames():
                 record.opened = stream.opened
@@ -163,7 +178,9 @@ def request_stop(config_path: Path | None) -> int:
     settings = load_settings(config_path)
     data = _data_dir(settings.data_dir, config_path)
     data.mkdir(parents=True, exist_ok=True)
-    (data / "stop.request").write_text("stop\n", encoding="utf-8")
+    control = data / "control"
+    control.mkdir(parents=True, exist_ok=True)
+    (control / "stop.request").write_text("stop\n", encoding="utf-8")
     return 0
 
 

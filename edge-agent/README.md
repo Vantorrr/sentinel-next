@@ -7,9 +7,9 @@ Local video processing agent for Sentinel-Next. Runs in each salon, captures RTS
 ## Quick Start
 
 ```bash
-# 1. Configure
-cp .env.example .env
-# Set SENTINEL_API_KEY (from admin panel) and SENTINEL_API_URL
+# 1. Configure. Values are data, not shell commands.
+cp packaging/env.example .env
+# Set SENTINEL_API_KEY and SENTINEL_API_URL. `sentinel-edge run` reads ./.env.
 
 # 2. Install
 pip install -e .

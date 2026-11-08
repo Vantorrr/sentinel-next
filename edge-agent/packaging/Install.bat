@@ -1,29 +1,31 @@
 @echo off
 chcp 65001 >nul
-cd /d "%~dp0"
+set "HERE=%~dp0"
+set "ROOT=%HERE%"
+if not exist "%ROOT%sentinel_edge\cli.py" set "ROOT=%HERE%.."
+cd /d "%ROOT%"
+
 net session >nul 2>&1
 if errorlevel 1 (
   echo Administrator approval is required once to register the boot task.
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs -WorkingDirectory '%~dp0'"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs -WorkingDirectory '%ROOT%'"
   exit /b
 )
 
-set "PYEXE="
-where py >nul 2>&1 && py -3 -c "import sys" >nul 2>&1 && set "PYEXE=py -3"
-if not defined PYEXE if exist "%LocalAppData%\Programs\Python\Python312\python.exe" set "PYEXE=%LocalAppData%\Programs\Python\Python312\python.exe"
-if not defined PYEXE where python >nul 2>&1 && set "PYEXE=python"
-if not defined PYEXE (
-  echo Installing Python 3.12 for the current user.
+set "PYEXE=%ProgramFiles%\Python312\python.exe"
+if not exist "%PYEXE%" (
+  echo Installing Python 3.12 for all users into Program Files.
   powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe' -OutFile \"$env:TEMP\python-setup.exe\""
   if errorlevel 1 goto :fail
-  "%TEMP%\python-setup.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_test=0
-  set "PYEXE=%LocalAppData%\Programs\Python\Python312\python.exe"
+  "%TEMP%\python-setup.exe" /quiet InstallAllUsers=1 PrependPath=0 Include_pip=1 Include_test=0 TargetDir="%ProgramFiles%\Python312"
+  if errorlevel 1 goto :fail
 )
 
-set "PYTHONPATH=%~dp0"
-%PYEXE% -m sentinel_edge.install_win install --root "%~dp0"
+set "PYTHONPATH=%ROOT%"
+"%PYEXE%" -m sentinel_edge.install_win install --root "%ROOT%"
 if errorlevel 1 goto :fail
-echo Install finished. The task SentinelEdge is visible in Task Scheduler.
+echo Install finished. Task SentinelEdge is visible in Task Scheduler.
+echo The running copy is under %%ProgramData%%\SentinelEdge\app, not this folder.
 pause
 exit /b 0
 

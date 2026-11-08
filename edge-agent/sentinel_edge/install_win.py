@@ -21,16 +21,12 @@ TASK_NAME = r"\SentinelEdge"
 LOCAL_SERVICE_SID = "S-1-5-19"
 
 
+def stamp_material(requirements: str, torch: str) -> str:
+    return requirements.rstrip() + "\n" + torch.rstrip() + "\n"
+
+
 def requirements_digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def pip_needed(stamp_path: Path, requirements_text: str, venv_python: Path) -> bool:
-    if not venv_python.exists():
-        return True
-    if not stamp_path.exists():
-        return True
-    return stamp_path.read_text(encoding="utf-8").strip() != requirements_digest(requirements_text)
 
 
 def pip_needed(stamp_path: Path, requirements_text: str, venv_python: Path) -> bool:
@@ -132,17 +128,78 @@ def schtasks_delete_argv() -> list[str]:
     return ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"]
 
 
-def acl_argv(folder: Path) -> list[str]:
-    """Replace inheritance and grant only SYSTEM, Administrators, Local Service."""
+def _icacls(folder: Path, *aces: str) -> list[str]:
+    command = ["icacls", str(folder), "/inheritance:r", "/T"]
+    for ace in aces:
+        command.extend(["/grant:r", ace])
+    return command
+
+
+def acl_commands(data: Path) -> list[list[str]]:
+    """Lock code and secrets. Operators can read status and write only stop.request."""
+    system = r"NT AUTHORITY\SYSTEM:(OI)(CI)F"
+    admins = r"BUILTIN\Administrators:(OI)(CI)F"
+    service = r"NT AUTHORITY\LOCAL SERVICE:(OI)(CI)M"
+    service_rx = r"NT AUTHORITY\LOCAL SERVICE:(OI)(CI)RX"
+    users_rx = r"BUILTIN\Users:(OI)(CI)RX"
+    users_m = r"BUILTIN\Users:(OI)(CI)M"
+    users_r = r"BUILTIN\Users:(OI)(CI)R"
     return [
-        "icacls",
-        str(folder),
-        "/inheritance:r",
-        "/grant:r",
-        "NT AUTHORITY\\SYSTEM:(OI)(CI)F",
-        "BUILTIN\\Administrators:(OI)(CI)F",
-        "NT AUTHORITY\\LOCAL SERVICE:(OI)(CI)M",
+        _icacls(data, system, admins, service, users_rx),
+        _icacls(data / "private", system, admins, service),
+        _icacls(data / "app", system, admins, service_rx),
+        _icacls(data / "models", system, admins, service_rx),
+        _icacls(data / "control", system, admins, service, users_m),
+        _icacls(data / "logs", system, admins, service, users_r),
     ]
+
+
+def resolve_package_root(start: Path) -> Path:
+    """Install.bat may live in the package root or in packaging/."""
+    start = start.resolve()
+    for candidate in (start, start.parent):
+        if (candidate / "sentinel_edge" / "cli.py").is_file() and (
+            candidate / "requirements-windows.txt"
+        ).is_file():
+            return candidate
+    raise FileNotFoundError(f"sentinel_edge package not found from {start}")
+
+
+def example_env_path(root: Path) -> Path:
+    for candidate in (root / "env.example", root / "packaging" / "env.example"):
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError("env.example")
+
+
+def config_source(root: Path) -> Path | None:
+    for name in ("config.env", ".env"):
+        candidate = root / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _windows_absolute(value: str) -> bool:
+    text = value.strip().strip('"')
+    if len(text) >= 3 and text[0].isalpha() and text[1] == ":":
+        return True
+    return text.startswith("\\\\")
+
+
+def installed_model_setting(current: str, model_file: Path) -> str:
+    """A bare filename follows the weights file the installer actually wrote."""
+    text = current.strip()
+    if not text or not (Path(text).is_absolute() or _windows_absolute(text)):
+        return str(model_file)
+    return text
+
+
+def retire_secret_source(path: Path) -> None:
+    path.write_text(
+        "# Moved to %ProgramData%\\SentinelEdge\\private\\config.env\n",
+        encoding="utf-8",
+    )
 
 
 def pip_commands(python_exe: Path, torch_file: Path, requirements: Path) -> list[list[str]]:
@@ -174,35 +231,48 @@ def install_actions(
     return actions
 
 
-def apply_install(root: Path, data: Path, runner) -> list[str]:
-    """Run install steps. `runner` is subprocess.run-compatible and gets an argv list."""
-    import os
-    data.mkdir(parents=True, exist_ok=True)
-    (data / "logs").mkdir(exist_ok=True)
-    (data / "models").mkdir(exist_ok=True)
-    example = (root / "packaging" / "env.example").read_text(encoding="utf-8")
-    legacy = root / ".env"
-    dest = data / "config.env"
-    migrate_config(legacy if legacy.exists() else None, dest, example)
+def apply_install(root: Path, data: Path, runner, base_python: Path) -> list[str]:
+    """Install into ProgramData. The boot task must not run a user-writable tree."""
+    for name in ("private", "app", "models", "control", "logs"):
+        (data / name).mkdir(parents=True, exist_ok=True)
+    for command in acl_commands(data):
+        runner(command)
+
+    example = example_env_path(root).read_text(encoding="utf-8")
+    source = config_source(root)
+    dest = data / "private" / "config.env"
+    flat = data / "config.env"
+    chosen = flat if not dest.exists() and flat.is_file() else source
+    action = migrate_config(chosen, dest, example)
     values = parse_env(dest.read_text(encoding="utf-8"))
     model = data / "models" / "yolo11n.pt"
-    if "SENTINEL_DATA_DIR" not in values:
-        values["SENTINEL_DATA_DIR"] = str(data)
-    if "SENTINEL_YOLO_MODEL" not in values:
-        values["SENTINEL_YOLO_MODEL"] = str(model)
+    values["SENTINEL_DATA_DIR"] = str(data)
+    values["SENTINEL_YOLO_MODEL"] = installed_model_setting(values.get("SENTINEL_YOLO_MODEL", ""), model)
     dest.write_text(render_env(values), encoding="utf-8")
+    if action == "copied" and chosen is not None and chosen.name != "env.example":
+        retire_secret_source(chosen)
+    if flat.is_file() and flat.resolve() != dest.resolve() and "SENTINEL_" in flat.read_text(encoding="utf-8"):
+        retire_secret_source(flat)
 
-    venv_python = root / ".venv" / "Scripts" / "python.exe"
+    app = data / "app"
+    venv_python = app / ".venv" / "Scripts" / "python.exe"
     if not venv_python.exists():
-        runner([sys.executable, "-m", "venv", str(root / ".venv")])
+        runner([str(base_python), "-m", "venv", str(app / ".venv")])
     torch_file = root / "requirements-torch-cpu.txt"
     requirements = root / "requirements-windows.txt"
     stamp = data / "install-stamp.txt"
-    text = requirements.read_text(encoding="utf-8") + torch_file.read_text(encoding="utf-8")
+    text = stamp_material(
+        requirements.read_text(encoding="utf-8"),
+        torch_file.read_text(encoding="utf-8"),
+    )
     done: list[str] = []
     if pip_needed(stamp, text, venv_python):
+        runner([str(venv_python), "-m", "pip", "install", "-U", "pip"])
         for command in pip_commands(venv_python, torch_file, requirements):
+            if command[3:5] == ["install", "-U"]:
+                continue
             runner(command)
+        runner([str(venv_python), "-m", "pip", "install", str(root)])
         done.append("pip")
         stamp.write_text(requirements_digest(text), encoding="utf-8")
     if not model.exists() or model.stat().st_size <= 0:
@@ -212,11 +282,11 @@ def apply_install(root: Path, data: Path, runner) -> list[str]:
         ])
         done.append("model")
     xml_path = data / "SentinelEdge.xml"
-    xml_path.write_text(render_task_xml(venv_python, dest, root), encoding="utf-16")
+    xml_path.write_text(render_task_xml(venv_python, dest, app), encoding="utf-16")
     runner(schtasks_create_argv(xml_path))
-    runner(acl_argv(data))
+    for command in acl_commands(data):
+        runner(command)
     done.append("task")
-    os.environ["SENTINEL_EDGE_INSTALLED"] = "1"
     return done
 
 
@@ -233,12 +303,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     program_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
     data = program_data / "SentinelEdge"
+    base_python = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Python312" / "python.exe"
 
     def runner(command: list[str]) -> None:
         subprocess.run(command, check=True)
 
     if args.command == "install":
-        apply_install(root, data, runner)
+        apply_install(resolve_package_root(root), data, runner, base_python)
         runner(schtasks_run_argv())
         return 0
     if args.command == "status":

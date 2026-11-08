@@ -55,6 +55,12 @@ def _pick(env: dict[str, str], key: str, default: str) -> str:
 
 def load_settings(path: Path | None = None) -> EdgeSettings:
     file_values: dict[str, str] = {}
+    if path is None:
+        for name in ("config.env", ".env"):
+            candidate = Path(name)
+            if candidate.exists():
+                path = candidate
+                break
     if path is not None and path.exists():
         file_values = parse_env(path.read_text(encoding="utf-8"))
     fps = _pick(file_values, "SENTINEL_FPS_INFERENCE", "5")

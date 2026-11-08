@@ -42,6 +42,7 @@ class EventSender:
             timeout=httpx.Timeout(10.0, connect=5.0),
         )
         self._running = False
+        self._flush_lock = asyncio.Lock()
         self._health.queue_depth = len(self._queue.events)
         self._health.dropped_oldest = self._queue.dropped
 
@@ -68,9 +69,13 @@ class EventSender:
             await self._flush()
 
     async def _flush(self) -> None:
+        async with self._flush_lock:
+            await self._flush_locked()
+
+    async def _flush_locked(self) -> None:
         if not self._queue.events:
             return
-        batch = self._queue.events[: self._settings.event_batch_size]
+        batch = list(self._queue.events[: self._settings.event_batch_size])
         try:
             resp = await self._client.post("/api/v1/agent/events", json={
                 "agent_id": self._settings.agent_id,
