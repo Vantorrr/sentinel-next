@@ -12,8 +12,11 @@ function Get-AclOf($entry) {
     if ($PSVersionTable.PSVersion.Major -ge 6) {
         return [System.IO.FileSystemAclExtensions]::GetAccessControl($entry)
     }
-    $sections = [System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner
-    return $entry.GetAccessControl($sections)
+    if ($entry.PSIsContainer) {
+        $sections = [System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner
+        return $entry.GetAccessControl($sections)
+    }
+    return $entry.GetAccessControl()
 }
 
 function Convert-ToSid($identity) {
