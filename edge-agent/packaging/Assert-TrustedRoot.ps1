@@ -4,11 +4,11 @@ param(
 $ErrorActionPreference = "Stop"
 $item = New-Object System.IO.DirectoryInfo $Root
 if (-not $item.Exists) {
-    Write-Error "Package folder was not found."
+    [Console]::Error.WriteLine("Package folder was not found.")
     exit 2
 }
 if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
-    Write-Error "Package path is a link or junction. Copy the folder to a normal directory and run Install again."
+    [Console]::Error.WriteLine("Package path is a link or junction. Copy the folder to a normal directory and run Install again.")
     exit 2
 }
 if ($PSVersionTable.PSVersion.Major -ge 6) {
@@ -32,7 +32,7 @@ foreach ($ace in $acl.Access) {
     $isBroad = ($broad -contains $sid) -or ($name -match "\\(Users|Everyone|Authenticated Users)$")
     if (-not $isBroad) { continue }
     if (([int]$ace.FileSystemRights -band $writeBits) -ne 0) {
-        Write-Error "Users can write this folder. Move it somewhere only an administrator can change, then run Install again."
+        [Console]::Error.WriteLine("Users can write this folder. Move it somewhere only an administrator can change, then run Install again.")
         exit 3
     }
 }
